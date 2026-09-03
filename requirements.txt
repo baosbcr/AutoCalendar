@@ -1,0 +1,2 @@
+# Only needed to read .xlsx files; CSV input and .ics output use the stdlib.
+openpyxl>=3.1
