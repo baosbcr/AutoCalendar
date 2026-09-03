@@ -1,0 +1,11 @@
+# Default: normalise line endings in the repository, native in the working copy.
+* text=auto
+
+# iCalendar requires CRLF line endings (RFC 5545), so keep these files exactly
+# as written - no normalisation on commit or checkout. (Later rules win here,
+# so these have to come after the catch-all above.)
+*.ics -text
+
+# Binary formats git should not touch or try to diff as text.
+*.xlsx binary
+*.xlsm binary
