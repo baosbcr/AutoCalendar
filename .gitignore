@@ -11,3 +11,7 @@ dist/
 ~$*.xlsx
 .DS_Store
 Thumbs.db
+
+# Local working material from Toke — contains real names, email addresses
+# and briefing text. This repo is public: never commit it.
+docs/from-toke/
