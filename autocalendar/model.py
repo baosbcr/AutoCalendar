@@ -24,7 +24,14 @@ class Event:
     description: str = ""
     categories: list[str] = field(default_factory=list)
     url: str = ""
+    required: list[str] = field(default_factory=list)
+    optional: list[str] = field(default_factory=list)
+    calendar: str = ""
     source_row: int = 0
+
+    @property
+    def has_attendees(self) -> bool:
+        return bool(self.required or self.optional)
 
     @property
     def all_day(self) -> bool:

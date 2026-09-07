@@ -59,6 +59,19 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "url": ("url", "link", "links", "meetinglink", "teams", "zoom", "web"),
     "all_day": ("allday", "fullday", "heldag", "heledagen"),
     "category": ("category", "type", "track", "tag", "tags", "label", "kategori"),
+    # Deliberately narrow. A column called "Speaker" or "Underviser" holds a
+    # name, not a mailing list - treating it as one would invite people
+    # nobody meant to invite. Only headers that unambiguously mean "these
+    # people get an invitation" count.
+    "required": (
+        "required", "attendees", "attendee", "requiredattendees",
+        "participants", "invitees", "deltagere", "inviterede",
+    ),
+    "optional": (
+        "optional", "optionalattendees", "cc", "copy", "observers",
+        "valgfri", "valgfrie", "kopi",
+    ),
+    "calendar": ("calendar", "targetcalendar", "kalender", "calendarname"),
 }
 
 _CANONICAL_BY_ALIAS = {
@@ -166,6 +179,20 @@ def _load_csv(path: Path) -> tuple[list[list], str]:
         dialect.delimiter = ";" if sample.count(";") > sample.count(",") else ","
     rows = [list(row) for row in csv.reader(text.splitlines(), dialect)]
     return rows, path.stem
+
+
+def split_people(text: str) -> list[str]:
+    """Split an attendee cell into names or addresses.
+
+    Semicolons win when present, because that is what Outlook writes and
+    because a display name may legitimately contain a comma ("Nielsen, Jan").
+    Only when there is no semicolon at all do commas separate.
+    """
+    if not text:
+        return []
+    separator = ";" if ";" in text else ","
+    parts = (piece.strip() for chunk in text.splitlines() for piece in chunk.split(separator))
+    return [p for p in parts if p]
 
 
 def load_rows(path: Path, sheet: str | int | None = None) -> tuple[list[list], str]:
@@ -334,6 +361,9 @@ def _row_to_event(
         description="\n".join(description_parts),
         categories=categories,
         url=_text(cell("url")),
+        required=split_people(_text(cell("required"))),
+        optional=split_people(_text(cell("optional"))),
+        calendar=_text(cell("calendar")),
         source_row=row_number,
     )
 

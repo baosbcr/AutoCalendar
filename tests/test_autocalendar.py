@@ -21,7 +21,17 @@ from autocalendar.parsing import (  # noqa: E402
     parse_time,
     split_time_range,
 )
-from autocalendar.reader import find_header_row, normalise, read_events  # noqa: E402
+from autocalendar.outlook import (  # noqa: E402
+    TEST_CATEGORY,
+    TEST_MARKER,
+    shift_to_test_window,
+)
+from autocalendar.reader import (  # noqa: E402
+    find_header_row,
+    normalise,
+    read_events,
+    split_people,
+)
 
 
 def write_csv(text: str) -> Path:
@@ -301,6 +311,92 @@ class TestExampleSheet(unittest.TestCase):
         self.assertEqual(len(result.skipped), 1)  # the "TBD" row
         text = build_calendar(result.events, calendar_name="Example")
         self.assertEqual(text.count("BEGIN:VEVENT"), 7)
+
+
+class TestAttendeeColumns(unittest.TestCase):
+    def test_semicolons_win_over_commas(self):
+        # a display name may legitimately contain a comma
+        self.assertEqual(
+            split_people("Nielsen, Jan; Hansen, Ole"), ["Nielsen, Jan", "Hansen, Ole"]
+        )
+
+    def test_commas_split_when_there_is_no_semicolon(self):
+        self.assertEqual(
+            split_people("a@dtu.dk, b@dtu.dk"), ["a@dtu.dk", "b@dtu.dk"]
+        )
+
+    def test_blank_gives_nothing(self):
+        self.assertEqual(split_people(""), [])
+        self.assertEqual(split_people("   "), [])
+
+    def test_reads_attendees_from_a_sheet(self):
+        path = write_csv(
+            "Date,Time,Subject,Attendees,Optional,Calendar\n"
+            "2026-09-07,09:00,Kick-off,a@dtu.dk; b@dtu.dk,c@dtu.dk,Teaching\n"
+        )
+        event = read_events(path).events[0]
+        self.assertEqual(event.required, ["a@dtu.dk", "b@dtu.dk"])
+        self.assertEqual(event.optional, ["c@dtu.dk"])
+        self.assertEqual(event.calendar, "Teaching")
+        self.assertTrue(event.has_attendees)
+
+    def test_a_speaker_column_is_not_an_invitation_list(self):
+        """A column of names must never become a list of people to email."""
+        path = write_csv(
+            "Date,Time,Subject,Speaker,Underviser\n"
+            "2026-09-07,09:00,Lecture,Jane Doe,Toke\n"
+        )
+        event = read_events(path).events[0]
+        self.assertEqual(event.required, [])
+        self.assertFalse(event.has_attendees)
+        self.assertIn("Speaker: Jane Doe", event.description)
+
+
+class TestTestWindow(unittest.TestCase):
+    def setUp(self):
+        self.events = [
+            Event(
+                title="First",
+                start=dt.datetime(2026, 8, 3, 9, 0),
+                end=dt.datetime(2026, 8, 3, 10, 0),
+            ),
+            Event(
+                title="Third day",
+                start=dt.datetime(2026, 8, 5, 14, 30),
+                end=dt.datetime(2026, 8, 5, 15, 0),
+            ),
+        ]
+
+    def test_shape_is_preserved(self):
+        shifted = shift_to_test_window(self.events)
+        gap = shifted[1].start - shifted[0].start
+        self.assertEqual(gap, dt.timedelta(days=2, hours=5, minutes=30))
+
+    def test_lands_far_from_any_real_calendar(self):
+        for event in shift_to_test_window(self.events):
+            self.assertEqual(event.start.year, 2099)
+
+    def test_everything_is_tagged_both_ways(self):
+        for event in shift_to_test_window(self.events):
+            self.assertIn(TEST_CATEGORY, event.categories)
+            self.assertTrue(event.title.startswith(TEST_MARKER))
+
+    def test_weekdays_are_preserved(self):
+        """A Monday session must not land on a Sunday."""
+        for original, shifted in zip(self.events, shift_to_test_window(self.events)):
+            self.assertEqual(original.start.weekday(), shifted.start.weekday())
+
+    def test_times_of_day_are_preserved(self):
+        for original, shifted in zip(self.events, shift_to_test_window(self.events)):
+            self.assertEqual(original.start.time(), shifted.start.time())
+
+    def test_the_originals_are_untouched(self):
+        shift_to_test_window(self.events)
+        self.assertEqual(self.events[0].start.year, 2026)
+        self.assertEqual(self.events[0].title, "First")
+
+    def test_empty_input(self):
+        self.assertEqual(shift_to_test_window([]), [])
 
 
 if __name__ == "__main__":

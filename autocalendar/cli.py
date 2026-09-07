@@ -18,6 +18,9 @@ from .reader import read_events
 from .timezones import DEFAULT_TZID, supported_timezones
 
 FIELD_LABELS = {
+    "required": "Attendees",
+    "optional": "Optional",
+    "calendar": "Calendar",
     "title": "Subject",
     "date": "Date",
     "end_date": "End date",
@@ -88,6 +91,49 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="exit with an error if any row could not be converted",
     )
+    outlook = parser.add_argument_group(
+        "Outlook",
+        "Create the events in Outlook itself and send real invitations. "
+        "A .ics file cannot do this - Outlook stores its attendee list for "
+        "reference and sends nothing.",
+    )
+    outlook.add_argument(
+        "--outlook",
+        action="store_true",
+        help="create the events in Outlook instead of writing a .ics",
+    )
+    outlook.add_argument(
+        "--send",
+        action="store_true",
+        help="actually send the invitations (without this, meetings are saved as drafts)",
+    )
+    outlook.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="shift everything into a tagged 2099 window that --purge-tests can remove",
+    )
+    outlook.add_argument(
+        "--mailbox", metavar="ADDRESS", help="which mailbox to use (default: the first)"
+    )
+    outlook.add_argument(
+        "--calendar", metavar="NAME", help="which calendar folder (default: the mailbox default)"
+    )
+    outlook.add_argument(
+        "--limit", type=int, metavar="N", help="only process the first N events"
+    )
+    outlook.add_argument(
+        "--list-calendars",
+        action="store_true",
+        help="show the calendars available in the mailbox and exit",
+    )
+    outlook.add_argument(
+        "--purge-tests",
+        action="store_true",
+        help="cancel and delete every test item from every mailbox and folder",
+    )
+    outlook.add_argument(
+        "--yes", action="store_true", help="skip the confirmation prompt for --send / --purge-tests"
+    )
     parser.add_argument("-q", "--quiet", action="store_true", help="only report problems")
     parser.add_argument(
         "--timezones", action="store_true", help="list the supported timezones and exit"
@@ -124,12 +170,116 @@ def _sheet_argument(value: str | None) -> str | int | None:
     return int(value) if value.isdigit() else value
 
 
+def _confirm(question: str, assume_yes: bool) -> bool:
+    """Anything that sends mail or deletes asks first, unless told not to."""
+    if assume_yes:
+        return True
+    try:
+        return input(f"{question} [type YES to continue] ").strip() == "YES"
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
+def _outlook_only(args) -> int:
+    """--list-calendars and --purge-tests need no spreadsheet."""
+    from .outlook import OutlookError, list_calendars, purge_tests
+
+    try:
+        if args.list_calendars:
+            for name in list_calendars(args.mailbox):
+                print(f"  {name}")
+            return 0
+
+        found = purge_tests(apply=False)["found"]
+        if not found:
+            print("No test items found. Nothing to purge.")
+            return 0
+        print(f"Found {found} test item(s) across all mailboxes and folders.")
+        if not _confirm("Cancel and delete them?", args.yes):
+            print("Nothing changed.")
+            return 0
+        counts = purge_tests(
+            apply=True,
+            on_progress=lambda folder, item: print(
+                f"  - {getattr(item, 'Subject', '?')[:60]}"
+            ),
+        )
+        print(
+            f"\nCancelled {counts['cancelled']}, deleted {counts['deleted']} "
+            f"in {counts['passes']} pass(es), {counts['remaining']} remaining."
+        )
+        if counts["remaining"]:
+            print("Some items survived every pass - run --purge-tests again.")
+            return 1
+        return 0
+    except OutlookError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _push_to_outlook(args, events) -> int:
+    from .outlook import OutlookError, push
+
+    # count only what will actually be processed, not the whole sheet
+    selected = list(events)[: args.limit] if args.limit else list(events)
+    with_people = sum(1 for e in selected if e.has_attendees)
+    total = len(selected)
+
+    print()
+    if args.test_mode:
+        print("TEST MODE - everything is shifted into 2099 and tagged for --purge-tests.")
+    if args.send:
+        print(f"About to create {total} event(s) and SEND invitations for {with_people}.")
+        if not _confirm("This emails real people.", args.yes):
+            print("Nothing changed.")
+            return 0
+    else:
+        print(f"Creating {total} event(s) as drafts. No invitations will be sent.")
+        print("Add --send once the result looks right.")
+    print()
+
+    try:
+        outcomes = push(
+            events,
+            mailbox=args.mailbox,
+            calendar=args.calendar,
+            send=args.send,
+            test_mode=args.test_mode,
+            limit=args.limit,
+            reminder_minutes=args.alarm,
+            on_progress=lambda outcome: print(outcome),
+        )
+    except OutlookError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    tally: dict[str, int] = {}
+    for outcome in outcomes:
+        tally[outcome.action] = tally.get(outcome.action, 0) + 1
+    print("\n  " + ", ".join(f"{n} {action}" for action, n in sorted(tally.items())))
+
+    unresolved = {name for o in outcomes for name in o.unresolved}
+    if unresolved:
+        print(f"\n  Could not match {len(unresolved)} name(s) in the address book:")
+        for name in sorted(unresolved):
+            print(f"    ? {name}")
+        print("  Use a full email address for anyone outside DTU.")
+
+    if args.test_mode:
+        print("\n  Remove all of this again with:  autocalendar --purge-tests")
+    return 1 if tally.get("failed") else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.timezones:
         print("\n".join(supported_timezones()))
         return 0
+
+    if args.list_calendars or args.purge_tests:
+        return _outlook_only(args)
 
     source = args.input or pick_file()
     if not source:
@@ -187,6 +337,9 @@ def main(argv: list[str] | None = None) -> int:
         for event in result.events:
             print(f"  {event}")
         return 0
+
+    if args.outlook:
+        return _push_to_outlook(args, result.events)
 
     output = Path(args.output) if args.output else path.with_suffix(".ics")
     calendar_name = args.name or path.stem.replace("_", " ").strip()
