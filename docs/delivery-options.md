@@ -1,8 +1,8 @@
 # Delivery options — sheet to Outlook, with invitations
 
-Status: **investigation complete, no path chosen.** Written 2026-09-04.
-Awaiting: an expert read on the three original options, a Copilot 365 answer on
-what the DTU tenant allows, and Toke's answer on send timing.
+Status: **path chosen 2026-09-07 — desktop Outlook automation (option A).**
+Investigation written 2026-09-04; verified by live testing 2026-09-07.
+Two earlier conclusions in this document were wrong and are corrected below.
 
 ---
 
@@ -105,9 +105,9 @@ are sent automatically when `attendees` is present — no extra flag.
 
 ---
 
-## The finding that re-ranks these
+## CORRECTION — the display-name finding was an artefact
 
-Toke's exported attendees are overwhelmingly **display names, not addresses**:
+The 2026-09-04 version of this document treated the following as decisive:
 
 ```
 distinct attendee tokens : 227
@@ -115,17 +115,122 @@ distinct attendee tokens : 227
   display name only      : 169   (74%)  — DTU staff, resolved via the address book
 ```
 
-Outlook resolved these against DTU's Exchange address book and the CSV export
-wrote back the *resolved name*. Consequences:
+and concluded that A and B win because desktop Outlook re-resolves names against the
+address book while C and D need real SMTP addresses.
 
-- **A and B work as-is** — desktop Outlook re-resolves names against the GAL.
-- **C and D do not** — both need SMTP addresses. Either Toke hand-fills ~169
-  addresses, or we build a name-to-address lookup step first.
+**This was reading a property of the export as a property of the workflow.** Those names
+are display names *because Outlook resolved them on the way out* when Toke downloaded his
+own calendar. Future editions source attendees from DTU Learn exports and speaker lists,
+which carry real email addresses. The 74% describes one CSV, not the job.
 
-This partly reverses the intuitive "Graph is cleanest" conclusion and is the
-strongest evidence currently on the table.
+The finding is retained here because it was the stated reason for an earlier
+recommendation, and the reasoning should not silently disappear. It is no longer a
+differentiator between the options.
 
----
+## CORRECTION — Graph's forced sending is not a real objection
+
+Microsoft's documentation is unambiguous: *"When you create an event that includes
+attendees, the server sends invitations to all attendees ... and can't be configured."*
+That was recorded here as a loss of control.
+
+It is not. Control lives one level up: the tool chooses **which rows to send in this run**,
+so batching gives the same pacing a deferred-send flag would. Sending months ahead is also
+normal for this course — invitations to the finals routinely go out before the course
+begins. The "send timing" worry was our assumption, not Toke's requirement.
+
+## The other APIs, for completeness
+
+"The Outlook API" is not one thing. Two of the five are already options above under other
+names.
+
+| API | Status | Relation to the options |
+|---|---|---|
+| Outlook Object Model (COM) | Alive, classic Outlook only | **is option A** |
+| Microsoft Graph | Current, Microsoft's designated successor | **is option D** |
+| Exchange Web Services (EWS) | **Disablement began October 2026; fully disabled April 2027** | do not use |
+| Outlook REST API v2.0 | HTTP 410 Gone since March 2024 | dead |
+| Office.js Outlook add-in | Alive, survives the new-Outlook transition | wrong shape — bulk creation calls Graph anyway, and it needs a manifest deployed by IT |
+
+EWS deserves the warning: it was the obvious "Python plus the Outlook API" answer for a
+decade, `exchangelib` tutorials still recommend it, and it is now the worst possible choice.
+
+## Verification results — 2026-09-07
+
+Tested on João's own machine, DTU student account `<the DTU test account>` (the same Entra tenant
+as Toke's mailbox) with classic Outlook and a personal @hotmail account as the guinea pig.
+
+| # | Test | Result |
+|---|---|---|
+| 1 | COM reachable; real folder names | **Pass.** Both mailboxes visible, DTU is Exchange Online, default calendar folder is `Calendar` |
+| 2 | COM creates and sends a real meeting | **Pass.** `Send()` returned in 0.9 s, no security prompt, invitation arrived with working Accept / Tentative / Decline |
+| 3 | Graph via Microsoft Graph PowerShell | **Blocked.** `AADSTS50105` — the Graph CLI app requires explicit assignment in this tenant |
+| 4 | Register a custom Entra app | **Blocked.** App registrations blade returns 401 |
+| 5 | Cancel and purge every trace | **Pass.** Cancellation sent, then 7 artefacts across 4 folders in 2 mailboxes removed, verified zero remaining |
+
+Details worth keeping:
+
+- **No object-model security prompt fired.** This was listed as an unknown; it is not a
+  problem on this machine.
+- **Timezones behaved.** An event set for 10:00 Copenhagen displayed as 09:00 in a mailbox
+  on Lisbon time — correct.
+- **Cleanup must cancel before deleting.** Calling `Delete()` on the organiser's copy
+  removes it locally and sends nothing, leaving attendees with a ghost meeting forever. The
+  correct sequence is `MeetingStatus = olMeetingCanceled` -> `Save()` -> `Send()` ->
+  `Delete()`.
+- **A cleanup pass cannot catch its own cancellation notice.** The cancellation arrives
+  after the sweep has read the folder, so it needs a second pass.
+- **Sent Items is easy to forget.** The first cleanup attempt missed the request and the
+  cancellation sitting there. Purge must walk every folder, not just Inbox and Calendar.
+- **Exchange's Recoverable Items dumpster is out of reach from COM.** Everything
+  user-visible can be removed; the retention copy ages out on its own, or is purged
+  manually via Folder -> Recover Deleted Items From Server.
+
+### Sending limits that matter at course scale
+
+Exchange Online: **30 messages/minute**, **10,000 recipients/day**, **1,000 recipients per
+message**, plus a tenant-wide external recipient limit. A 200-student cohort is roughly
+seven minutes of steady sending. The tool should pace deliberately rather than fire as fast
+as COM allows.
+
+## The decision
+
+**Build option A — Python driving desktop Outlook, shipped as a self-contained executable.**
+
+Not because it is the most elegant. Graph is the better architecture and it survives the
+eventual retirement of classic Outlook, which A does not. A wins on availability: two
+independent routes into Graph are closed by deliberate DTU policy, so every Graph path
+starts with an IT request of unknown duration, while COM did the entire job today with no
+permission from anyone.
+
+Honest record of how this conclusion moved, because it moved twice:
+
+1. Favoured A on the display-name finding — which was an artefact.
+2. Corrected toward D once that fell, and D also handles bulk sending better and gives
+   stable event IDs for the re-run problem.
+3. Settled on A when the tenant turned out to be locked.
+
+The caveat on test 4: the 401 is the Entra *portal* refusing access, and Microsoft has a
+separate setting that hides the portal while leaving registration possible via API. That
+cannot be probed here because the CLI app is also blocked. Both reachable doors are shut;
+whether a third exists is a question for DTU IT, written up in the Bookkeeping repo at
+`statuses/dtu-it-questions.md`.
+
+Option B (the VBA button) remains a possible nicety later — same engine, nicer for Toke —
+but only if DTU permits macro-enabled workbooks, which is unknown and also on the IT list.
+
+## Test safety rules for the build
+
+Agreed 2026-09-07, after proving that test artefacts can be fully removed:
+
+1. Tag every generated test item with a dedicated **category and a hidden user property**,
+   never a subject-substring match — that would eventually eat a real event.
+2. Confine test events to a **distinctive far-future date window**, so cleanup filters on
+   tag *and* date: two independent conditions.
+3. Purge **recursively across every folder** in both mailboxes, cancel-before-delete, with
+   a second pass for cancellation notices.
+4. Use **`Save()` for volume runs and `Send()` only for small deliberate sends.** "Does the
+   loop survive 117 rows" and "does an invitation arrive" are separate questions, and only
+   the second needs mail to leave the building.
 
 ## The unsolved part: re-running after edits
 
@@ -150,17 +255,20 @@ lands.
 
 ## Gotchas register
 
-- **Localised calendar folder names** — TheStaticTurtle's script broke on
-  `Calendrier` vs `Calendar`. Toke is Danish at a Danish university: assume
-  `Kalender` is possible, never hard-code the folder name.
+- **Localised calendar folder names** — a public script broke on `Calendrier` vs `Calendar`,
+  and this document assumed `Kalender` was likely for a Danish university. **Corrected:**
+  Toke's Outlook runs an English display language with Danish regional formats, and his
+  folders read `Calendar — <his DTU address>`. The DTU test account is the same. Still do not
+  hard-code the name — but this is not the trap it was written up as.
 - **Multiple calendars** — the video shows at least six (his main work calendar plus
-  `Innovation in En...`, `Facilitator Info`, `innovator info`, ...). "Which
-  calendar" is a column, not a constant.
-- **Timezone shifting** when start and end timezones are set independently.
-  AutoCalendar already writes `Europe/Copenhagen`.
-- **Fully-qualified addresses** required by C and D — see the display-name finding.
-
----
+  `Innovation in En...`, `Facilitator Info`, `innovator info`, ...), plus shared team
+  calendars. "Which calendar" is a column, not a constant.
+- **Timezone shifting** when start and end timezones are set independently. Verified
+  behaving correctly in testing; AutoCalendar writes `Europe/Copenhagen`.
+- **Cancel before delete**, always — see the verification section.
+- **Sent Items holds copies** of both the request and the cancellation.
+- **Outlook deletions can need repeat passes** according to prior art. Not reproduced in our
+  testing, but the purge keeps a verification pass regardless.
 
 ## What the source data actually is
 
@@ -183,28 +291,25 @@ August 2026 edition.
 
 ## Open questions for Toke
 
-1. **Send timing** — invitations immediately on import, a separate deliberate send
-   step, or a per-row "send on" date? Sending months early to external speakers
-   may not be wanted.
-2. **What is a "course edition"** concretely — same structure with shifted dates
-   and swapped speakers? Should the tool offer a "shift all dates by N weeks"?
+1. ~~**Send timing**~~ — **resolved, no longer blocking.** Invitations normally go out well
+   in advance for this course, and the tool controls pacing by choosing which rows to send.
+2. **What is a "course edition"** concretely — same structure with shifted dates and
+   swapped speakers? Should the tool offer a "shift all dates by N weeks"?
 3. **Should the Categories gate sending?** e.g. only `Complete` rows get invites;
    `Placeholder` rows become calendar blockers with no attendees.
-4. **Which calendar** should events land in, given he keeps at least six?
-5. **The ~169 missing email addresses** — is there an export that includes them,
-   or is address-book resolution (options A/B) the answer?
+4. **Which calendar** should events land in, given he keeps at least six? *This is now the
+   main open question.*
+5. ~~**The ~169 missing email addresses**~~ — **withdrawn.** See the correction above; the
+   names were an artefact of his export, and future editions come from lists that carry
+   real addresses.
 
----
+## Testing constraint — resolved
 
-## Testing constraint
-
-João's personal mailbox is **@hotmail, used via Outlook web only** — no desktop
-Outlook for it, so the A/B invite test cannot run against it as things stand.
-Classic Outlook *is* installed on BPC and accepts Outlook.com accounts, so adding
-it there is the cheap fix. Graph also works against personal Microsoft accounts,
-so D could be tested without touching DTU at all.
-
----
+Previously: João's personal mailbox is @hotmail and was web-only, so the invite test could
+not run. **Resolved 2026-09-07** — the account was added to classic Outlook on BPC
+alongside the DTU student account, which is what made the end-to-end invitation test
+possible. Both mailboxes are reachable from one COM session, which is also what allowed the
+purge to verify both sides.
 
 ## A note on the source files
 
@@ -225,3 +330,10 @@ Anyone picking this up on another machine needs those files re-supplied by hand.
 - Power Platform community — Flow to send invites from Excel: https://community.powerplatform.com/forums/thread/details/?threadid=48875206-6a16-4d8c-b194-d71e94c2ee92
 - nishanthrj/Outlook-Meeting-Invite (closest prior art): https://github.com/nishanthrj/Outlook-Meeting-Invite
 - Outlook ICS METHOD:REQUEST behaviour: https://en.ittrip.xyz/ms-office/outlook/ics-file-issue-outlook
+- Microsoft — Deprecation of Exchange Web Services in Exchange Online: https://learn.microsoft.com/en-us/exchange/clients-and-mobile-in-exchange-online/deprecation-of-ews-exchange-online
+- Microsoft — Outlook REST API v2.0 decommissioning: https://devblogs.microsoft.com/microsoft365dev/outlook-rest-api-v2-0-and-beta-endpoints-decommissioning-update/
+- Microsoft — Recipients.Add (accepts display name, alias or SMTP): https://learn.microsoft.com/en-us/office/vba/api/outlook.recipients.add
+- Microsoft — AppointmentItem.MeetingStatus: https://learn.microsoft.com/en-us/office/vba/api/outlook.appointmentitem.meetingstatus
+- Microsoft — Macros from the internet are blocked by default: https://learn.microsoft.com/en-us/microsoft-365-apps/security/internet-macros-blocked
+- Microsoft — Exchange Online limits: https://learn.microsoft.com/en-us/office365/servicedescriptions/exchange-online-service-description/exchange-online-limits
+- Microsoft Graph permissions — Calendars.ReadWrite (delegated: no admin consent): https://graphpermissions.merill.net/permission/Calendars.ReadWrite
