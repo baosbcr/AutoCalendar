@@ -113,6 +113,75 @@ is not thrown away: it is appended to the event description as
 - No subject, or a date it cannot read (`TBD`) → the row is **skipped and
   listed**, never dropped in silence
 
+## Sending real invitations (Windows + classic Outlook)
+
+A `.ics` file cannot invite anyone. Outlook reads its attendee list when importing,
+stores it for reference, and sends nothing - the event looks completely correct and
+silently invites nobody. To actually send meeting requests the tool drives Outlook
+itself.
+
+Add an `Attendees` column to the sheet (and optionally `Optional` and `Calendar`),
+then:
+
+```powershell
+# create every event as a draft - nothing is sent
+python -m autocalendar programme.xlsx --outlook
+
+# send the invitations, for the first 10 rows only
+python -m autocalendar programme.xlsx --outlook --send --limit 10
+```
+
+Saving is the default. `--send` is opt-in and asks for a typed confirmation.
+
+### Running it again after the sheet changes
+
+The second run is the one that matters, because a course edition is edited over
+weeks. `--sync` compares the sheet against the calendar and reports what it would
+do, without touching anything:
+
+```
+CHANGES SINCE THE LAST RUN
+
+     1  new                      (would contact 1)
+     4  changed                  (would contact 3)
+     1  no longer in the sheet   (nobody contacted)
+     5  unchanged                (nobody contacted)
+
+  ~ SF, Day 2 Team Formation  [location]     -> 1 person
+  ~ MR, Day 3 ...             [description]  (silent)
+```
+
+Start, end, location, title and attendee changes notify the people involved.
+Everything else is saved quietly, so tidying a description does not mail 200
+students. `--apply` carries the plan out; add `--send` to let it notify anyone.
+
+To make this work the tool adds an **`AutoCalendar ID`** column to the sheet and
+fills it on the first run. That column is how a later run knows which row is which
+event, so a session can be retitled, moved to another week or dragged elsewhere in
+the sheet and still be recognised. **Do not edit or delete it.**
+
+### Rehearsing, and cleaning up
+
+`--test-mode` shifts an entire programme into a tagged window in 2099, preserving
+weekdays and times, so the whole thing can be run at full scale without any risk of
+being mistaken for real work. `--purge-tests` then removes every trace - from every
+folder of every mailbox, cancelling before deleting so nobody is left holding a
+meeting that no longer exists.
+
+```powershell
+python -m autocalendar programme.xlsx --outlook --test-mode
+python -m autocalendar --purge-tests
+```
+
+### What this needs
+
+Windows, with **classic** Outlook installed, running and signed in. The new Outlook
+supports no automation of this kind. The events themselves are stored on the server,
+so they appear in every client - new Outlook, the web, a phone - it is only the tool
+that needs the classic one.
+
+Also `pip install pywin32`.
+
 ## Installing the calendar
 
 - **Outlook (desktop)** — File → Open & Export → Import/Export → *Import an

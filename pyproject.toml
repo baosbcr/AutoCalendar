@@ -11,6 +11,10 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 dependencies = ["openpyxl>=3.1"]
 
+[project.optional-dependencies]
+# Sending invitations drives classic Outlook over COM, which is Windows only.
+outlook = ["pywin32>=306; sys_platform == 'win32'"]
+
 [project.scripts]
 autocalendar = "autocalendar.cli:main"
 
