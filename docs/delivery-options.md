@@ -166,6 +166,7 @@ as Toke's mailbox) with classic Outlook and a personal @hotmail account as the g
 | 3 | Graph via Microsoft Graph PowerShell | **Blocked.** `AADSTS50105` — the Graph CLI app requires explicit assignment in this tenant |
 | 4 | Register a custom Entra app | **Blocked.** App registrations blade returns 401 |
 | 5 | Cancel and purge every trace | **Pass.** Cancellation sent, then 7 artefacts across 4 folders in 2 mailboxes removed, verified zero remaining |
+| 6 | Does importing a .ics with `ATTENDEE` send anything? | **No - confirmed firsthand.** See below |
 
 Details worth keeping:
 
@@ -184,6 +185,41 @@ Details worth keeping:
 - **Exchange's Recoverable Items dumpster is out of reach from COM.** Everything
   user-visible can be removed; the retention copy ages out on its own, or is purged
   manually via Folder -> Recover Deleted Items From Server.
+
+### The .ics import, observed rather than assumed
+
+A hand-built `.ics` carrying `METHOD:REQUEST`, an `ORGANIZER` and one external
+`ATTENDEE` was imported through the Outlook UI (File > Open & Export > Import) into
+the DTU calendar. After 45 seconds, a sweep of every folder in both mailboxes found
+exactly one item - the calendar entry itself. Nothing in the attendee's inbox,
+nothing in Sent Items, nothing in the Outbox.
+
+What the import produced:
+
+```
+class         : IPM.Appointment
+MeetingStatus : 1   olMeeting ("I organise this")
+organizer     : <the DTU account>
+recipients    : 2  - the organiser, resolved against the Exchange directory,
+                     and the external attendee, Required, correct address
+```
+
+**This is worse than the documentation implies.** Outlook does not degrade the event
+into a plain appointment with the attendees dropped, which would at least look wrong.
+It creates a *proper meeting*, keeps `MeetingStatus = olMeeting`, resolves the
+organiser against the directory and preserves the attendee list - and sends nothing.
+On screen the event is indistinguishable from one that did invite people.
+
+That silence is the real risk to Toke: he could build an entire course edition, see
+attendees listed on every event, and discover the problem only when nobody arrives.
+
+For contrast, cancelling those same meetings through COM *did* send cancellations to
+the same attendee. It is not a delivery problem; importing simply never initiates a
+send.
+
+Note also that AutoCalendar's own writer emits `METHOD:PUBLISH` with no `ORGANIZER`
+and no `ATTENDEE` at all, so the shipped `.ics` cannot invite anyone by construction -
+this test covers the harder case of a file that genuinely asks for invitations.
 
 ### Sending limits that matter at course scale
 
@@ -267,8 +303,17 @@ lands.
   behaving correctly in testing; AutoCalendar writes `Europe/Copenhagen`.
 - **Cancel before delete**, always — see the verification section.
 - **Sent Items holds copies** of both the request and the cancellation.
-- **Outlook deletions can need repeat passes** according to prior art. Not reproduced in our
-  testing, but the purge keeps a verification pass regardless.
+- **Outlook deletions need repeat passes.** Prior art warned of it and we reproduced it:
+  one run cleared 59 items and left 10, another needed four passes. The purge now loops
+  until a verification sweep comes back empty rather than assuming a fixed number.
+- **`.ics` files may be associated with the new Outlook**, which on a stock Windows 11
+  machine with both versions installed dead-ends at a sign-in prompt whose Continue
+  button does nothing. "Just double-click the file" is not a safe instruction to give.
+- **`OpenSharedItem` on a `METHOD:REQUEST` file returns a `MeetingItem`, not an
+  appointment** - no `.Start`, and `GetAssociatedAppointment` returns `None` while the
+  item is not in a store. Relevant to anyone automating around .ics files.
+- **`OUTLOOK.EXE /f` expects a `.msg`**, not a `.ics`; it fails with a misleading
+  "file is already open, or you don't have permission" dialog.
 
 ## What the source data actually is
 
