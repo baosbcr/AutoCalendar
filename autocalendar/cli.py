@@ -21,6 +21,7 @@ FIELD_LABELS = {
     "required": "Attendees",
     "optional": "Optional",
     "calendar": "Calendar",
+    "event_id": "AutoCalendar ID",
     "title": "Subject",
     "date": "Date",
     "end_date": "End date",
@@ -127,6 +128,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="show the calendars available in the mailbox and exit",
     )
     outlook.add_argument(
+        "--sync",
+        action="store_true",
+        help="compare the sheet against the calendar and report what changed",
+    )
+    outlook.add_argument(
+        "--apply",
+        action="store_true",
+        help="carry out the plan from --sync (add --send to notify attendees)",
+    )
+    outlook.add_argument(
         "--purge-tests",
         action="store_true",
         help="cancel and delete every test item from every mailbox and folder",
@@ -218,8 +229,85 @@ def _outlook_only(args) -> int:
         return 2
 
 
-def _push_to_outlook(args, events) -> int:
+def _sync_with_outlook(args, path, result) -> int:
+    """Second and later runs: what changed, and who would hear about it."""
+    from .outlook import OutlookError, connect, find_calendar, find_store
+    from .sheet_ids import SheetWriteError, ensure_ids
+    from .sync import apply_plan, build_plan, describe
+
+    try:
+        added = ensure_ids(
+            path, result.events, sheet=result.sheet, header_row=result.header_row
+        )
+    except SheetWriteError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("Nothing was changed, in the sheet or in Outlook.", file=sys.stderr)
+        return 2
+    if added:
+        print(f"Gave {added} row(s) a permanent id and saved {path.name}.")
+        print("That column is how a later run recognises these events. Leave it alone.")
+
+    events = result.events
+    if args.test_mode:
+        from .outlook import shift_to_test_window
+
+        events = shift_to_test_window(events)
+
+    try:
+        _, namespace = connect()
+        store = find_store(namespace, args.mailbox)
+        folder = find_calendar(store, args.calendar)
+        plan = build_plan(events, folder)
+    except OutlookError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print()
+    print(describe(plan))
+
+    if plan.is_empty:
+        print("\nNothing to do.")
+        return 0
+    if not args.apply:
+        print("\nNothing applied. Re-run with --apply to carry this out,")
+        print("and add --send if the people involved should be told.")
+        return 0
+
+    if plan.people_contacted and args.send:
+        if not _confirm(
+            f"This will email {plan.people_contacted} recipient(s).", args.yes
+        ):
+            print("Nothing changed.")
+            return 0
+
+    tally = apply_plan(plan, folder, send=args.send)
+    print()
+    print(
+        f"  created {tally['created']}, updated {tally['updated']}, "
+        f"removed {tally['cancelled']}, failed {tally['failed']}"
+    )
+    print(f"  mail sent to {tally['notified']} recipient(s)")
+    if not args.send and plan.people_contacted:
+        print("  (--send was not given, so the calendar changed but nobody was told)")
+    return 1 if tally["failed"] else 0
+
+
+def _push_to_outlook(args, path, result) -> int:
     from .outlook import OutlookError, push
+    from .sheet_ids import SheetWriteError, ensure_ids
+
+    events = result.events
+    # Give every row an identity now, so a later --sync can recognise these
+    # events after they have been edited.
+    try:
+        added = ensure_ids(
+            path, events, sheet=result.sheet, header_row=result.header_row
+        )
+        if added:
+            print(f"Gave {added} row(s) a permanent id and saved {path.name}.")
+    except SheetWriteError as exc:
+        print(f"warning: could not write ids into the sheet ({exc}).")
+        print("Re-running later will not be able to match these events.")
 
     # count only what will actually be processed, not the whole sheet
     selected = list(events)[: args.limit] if args.limit else list(events)
@@ -338,8 +426,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {event}")
         return 0
 
+    if args.sync:
+        return _sync_with_outlook(args, path, result)
     if args.outlook:
-        return _push_to_outlook(args, result.events)
+        return _push_to_outlook(args, path, result)
 
     output = Path(args.output) if args.output else path.with_suffix(".ics")
     calendar_name = args.name or path.stem.replace("_", " ").strip()

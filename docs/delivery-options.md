@@ -268,10 +268,9 @@ Agreed 2026-09-07, after proving that test artefacts can be fully removed:
    loop survive 117 rows" and "does an invitation arrive" are separate questions, and only
    the second needs mail to leave the building.
 
-## The unsolved part: re-running after edits
+## Re-running after edits - solved 2026-09-07
 
-Every published recipe **punts on this**, which means it is real engineering, not
-something we get for free:
+Every published recipe punts on this, which is why it was the last real risk:
 
 | Source | How it handles a second run |
 |---|---|
@@ -279,15 +278,71 @@ something we get for free:
 | TheStaticTurtle (Python/COM) | Deletes all future events and recreates; reports Outlook deletion is *flaky*, needing repeated passes |
 | Power Automate thread | Avoids duplicates only by filtering to a narrow date window |
 
-Notably, TheStaticTurtle's script — the closest public match to our tool —
-**deliberately omits attendees and invitations** to avoid disrupting shared
-calendars. The one person who built our tool avoided our hard part.
+None of those work for a course edition, which is edited over weeks. "Skip
+imported rows" never applies a change. "Delete and recreate" re-invites everyone
+to everything, every time.
 
-"Update in place, notify only the affected attendees" is where the actual value
-is, and it is unsolved in public. Decision deferred until the 10-event sample
-lands.
+### Identity: one column, written once
 
----
+Nothing already in the sheet can say which row is which event. Titles repeat
+across days (`PA, Team Allocation Support` appears on several), dates are exactly
+what gets edited, and row numbers move when a line is inserted. So the tool adds
+an **`AutoCalendar ID`** column and fills it on the first run, and stamps the same
+id on the Outlook item as a hidden user property. A row can then be retitled,
+moved to another week or dragged elsewhere in the sheet and still be recognised.
+
+This is the only place AutoCalendar writes to a file the user owns. It writes to a
+temporary file in the same folder and swaps it in only on success, and never
+overwrites an id that is already there.
+
+Considered and rejected: a sidecar state file (breaks silently the moment the
+sheet is renamed, copied or emailed - all normal for Toke), and matching on title
+plus nearest date (genuinely ambiguous on his real data).
+
+### What a re-run does
+
+It reports, and sends nothing, until told twice:
+
+```
+CHANGES SINCE THE LAST RUN
+
+     1  new                      (would contact 1)
+     4  changed                  (would contact 3)
+     1  no longer in the sheet   (nobody contacted)
+     5  unchanged                (nobody contacted)
+
+  + NEW: Debrief                          -> 1 person
+  ~ CR, Kick-off ...          [start]     -> 1 person
+  ~ SF, Day 2 Team Formation  [location]  -> 1 person
+  ~ MR, Day 3 ...             [description]  (silent)
+  ~ Student Room ...          [attendees] -> 1 person
+  - Finals                    [appointment]  (silent)
+
+  Applying this would put mail in 4 inboxes.
+```
+
+The line that matters is the silent one. **Start, end, location, title and
+attendees notify; everything else is saved quietly.** A tidied description does
+not put mail in 200 inboxes.
+
+An event dropped from the sheet is cancelled properly if people were invited, and
+simply deleted if it was never sent - so an unsent draft bothers nobody.
+
+### Verified behaviour
+
+Run against a live DTU mailbox on 2026-09-07 with a ten-row sheet:
+
+- **Run 1** created 10 events and wrote 10 ids back into the sheet.
+- The sheet was then edited the way Toke edits one: a session moved an hour, a
+  room changed, a description tidied, an attendee added, a row added, a row
+  deleted.
+- **Run 2** classified all six correctly and named the three people who would be
+  contacted; applying it created 1, updated 4, removed 1, and sent exactly 4
+  messages.
+- **Run 3, with nothing edited, reported 10 unchanged and zero inboxes.**
+
+That last one is the property that makes it safe to run repeatedly, and it is the
+one every published approach fails.
 
 ## Gotchas register
 

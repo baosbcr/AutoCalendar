@@ -26,6 +26,15 @@ from autocalendar.outlook import (  # noqa: E402
     TEST_MARKER,
     shift_to_test_window,
 )
+from autocalendar.sync import (  # noqa: E402
+    NEW,
+    ORPHANED,
+    UNCHANGED,
+    UPDATED,
+    Change,
+    Plan,
+    compare,
+)
 from autocalendar.reader import (  # noqa: E402
     find_header_row,
     normalise,
@@ -397,6 +406,115 @@ class TestTestWindow(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(shift_to_test_window([]), [])
+
+
+class FakeRecipients:
+    def __init__(self, addresses):
+        self._people = [type("R", (), {"Address": a, "Name": a})() for a in addresses]
+
+    def __iter__(self):
+        return iter(self._people)
+
+    @property
+    def Count(self):
+        return len(self._people)
+
+
+class FakeItem:
+    """Enough of an Outlook AppointmentItem for compare() to work on."""
+
+    def __init__(self, **kw):
+        self.Subject = kw.get("subject", "Kick-off")
+        self.Location = kw.get("location", "Room 1")
+        self.Start = kw.get("start", dt.datetime(2026, 8, 3, 9, 0))
+        self.End = kw.get("end", dt.datetime(2026, 8, 3, 10, 0))
+        self.Body = kw.get("body", "Opening session.")
+        self.Recipients = FakeRecipients(kw.get("people", []))
+
+
+def sheet_event(**kw):
+    return Event(
+        title=kw.get("title", "Kick-off"),
+        start=kw.get("start", dt.datetime(2026, 8, 3, 9, 0)),
+        end=kw.get("end", dt.datetime(2026, 8, 3, 10, 0)),
+        location=kw.get("location", "Room 1"),
+        description=kw.get("description", "Opening session."),
+        required=kw.get("required", []),
+        event_id=kw.get("event_id", "aaaa-bbbb-cccc"),
+    )
+
+
+class TestSyncComparison(unittest.TestCase):
+    def test_identical_rows_are_unchanged(self):
+        self.assertEqual(compare(sheet_event(), FakeItem()), [])
+
+    def test_a_moved_session_is_seen(self):
+        moved = sheet_event(start=dt.datetime(2026, 8, 3, 10, 0))
+        self.assertIn("start", compare(moved, FakeItem()))
+
+    def test_a_room_change_is_seen(self):
+        self.assertIn("location", compare(sheet_event(location="Room 9"), FakeItem()))
+
+    def test_an_added_attendee_is_seen(self):
+        event = sheet_event(required=["a@dtu.dk"])
+        self.assertIn("attendees", compare(event, FakeItem(people=[])))
+
+    def test_an_unchanged_attendee_list_is_not_a_change(self):
+        event = sheet_event(required=["a@dtu.dk"])
+        self.assertNotIn("attendees", compare(event, FakeItem(people=["a@dtu.dk"])))
+
+
+class TestWhoGetsTold(unittest.TestCase):
+    """The whole point: only bother people when the change concerns them."""
+
+    def test_a_tidied_description_tells_nobody(self):
+        change = Change(sheet_event(required=["a@dtu.dk"]), UPDATED, ["description"])
+        self.assertFalse(change.notifies)
+
+    def test_a_moved_session_tells_everyone(self):
+        change = Change(sheet_event(required=["a@dtu.dk"]), UPDATED, ["start"])
+        self.assertTrue(change.notifies)
+
+    def test_a_room_change_tells_everyone(self):
+        change = Change(sheet_event(required=["a@dtu.dk"]), UPDATED, ["location"])
+        self.assertTrue(change.notifies)
+
+    def test_a_new_event_without_attendees_tells_nobody(self):
+        self.assertFalse(Change(sheet_event(), NEW).notifies)
+
+    def test_an_unchanged_row_tells_nobody(self):
+        change = Change(sheet_event(required=["a@dtu.dk"]), UNCHANGED)
+        self.assertFalse(change.notifies)
+
+    def test_a_dropped_appointment_that_nobody_saw_tells_nobody(self):
+        change = Change(sheet_event(), ORPHANED, detail="appointment")
+        self.assertFalse(change.notifies)
+
+    def test_a_dropped_meeting_is_cancelled_to_its_attendees(self):
+        change = Change(
+            sheet_event(required=["a@dtu.dk"]),
+            ORPHANED,
+            detail="meeting - would be cancelled",
+        )
+        self.assertTrue(change.notifies)
+
+
+class TestPlanTotals(unittest.TestCase):
+    def test_a_plan_of_only_unchanged_rows_is_empty(self):
+        plan = Plan([Change(sheet_event(), UNCHANGED) for _ in range(5)])
+        self.assertTrue(plan.is_empty)
+        self.assertEqual(plan.people_contacted, 0)
+
+    def test_only_notifying_changes_count_towards_mail(self):
+        plan = Plan(
+            [
+                Change(sheet_event(required=["a@dtu.dk"]), UPDATED, ["start"]),
+                Change(sheet_event(required=["b@dtu.dk"]), UPDATED, ["description"]),
+                Change(sheet_event(required=["c@dtu.dk"]), UNCHANGED),
+            ]
+        )
+        self.assertFalse(plan.is_empty)
+        self.assertEqual(plan.people_contacted, 1)
 
 
 if __name__ == "__main__":

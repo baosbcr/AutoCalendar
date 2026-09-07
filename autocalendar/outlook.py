@@ -162,8 +162,10 @@ def shift_to_test_window(events: Sequence[Event]) -> list[Event]:
 def _stamp(item, event: Event, test_mode: bool) -> None:
     """Mark an item so cleanup can find it again without guessing."""
     try:
+        # The sheet's own id when it has one, so a later run can recognise this
+        # item after any edit. Falls back to the content hash for one-off runs.
         prop = item.UserProperties.Add(PROP_UID, 1)  # olText
-        prop.Value = event.uid()
+        prop.Value = event.event_id or event.uid()
     except Exception:
         pass  # a custom property is a convenience, not a requirement
     categories = list(event.categories)

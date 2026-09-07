@@ -24,6 +24,7 @@ class Event:
     description: str = ""
     categories: list[str] = field(default_factory=list)
     url: str = ""
+    event_id: str = ""
     required: list[str] = field(default_factory=list)
     optional: list[str] = field(default_factory=list)
     calendar: str = ""

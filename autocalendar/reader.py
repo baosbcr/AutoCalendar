@@ -72,6 +72,9 @@ ALIASES: dict[str, tuple[str, ...]] = {
         "valgfri", "valgfrie", "kopi",
     ),
     "calendar": ("calendar", "targetcalendar", "kalender", "calendarname"),
+    # Never a bare "id" - the sheet may already have one meaning something else,
+    # and hijacking it would silently break the link to the real events.
+    "event_id": ("autocalendarid", "autocalid", "autocalendareventid"),
 }
 
 _CANONICAL_BY_ALIAS = {
@@ -364,6 +367,7 @@ def _row_to_event(
         required=split_people(_text(cell("required"))),
         optional=split_people(_text(cell("optional"))),
         calendar=_text(cell("calendar")),
+        event_id=_text(cell("event_id")),
         source_row=row_number,
     )
 
