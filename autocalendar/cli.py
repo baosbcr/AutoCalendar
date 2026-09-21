@@ -119,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="with --test-mode: keep the real dates, still tagged so --purge-tests removes them",
     )
     outlook.add_argument(
+        "--no-response",
+        action="store_true",
+        help="do not request responses (for placeholders: no 'Please respond', no replies)",
+    )
+    outlook.add_argument(
         "--mailbox", metavar="ADDRESS", help="which mailbox to use (default: the first)"
     )
     outlook.add_argument(
@@ -225,6 +230,12 @@ def _outlook_only(args) -> int:
             f"\nCancelled {counts['cancelled']}, deleted {counts['deleted']} "
             f"in {counts['passes']} pass(es), {counts['remaining']} remaining."
         )
+        if counts.get("outbox_stuck"):
+            print(
+                f"{counts['outbox_stuck']} cancellation(s) are still in the Outbox, so nothing "
+                "was deleted yet. Check Outlook is online, then run --purge-tests again."
+            )
+            return 1
         if counts["remaining"]:
             print("Some items survived every pass - run --purge-tests again.")
             return 1
@@ -285,7 +296,7 @@ def _sync_with_outlook(args, path, result) -> int:
             print("Nothing changed.")
             return 0
 
-    tally = apply_plan(plan, folder, send=args.send)
+    tally = apply_plan(plan, folder, send=args.send, response_requested=not args.no_response)
     print()
     print(
         f"  created {tally['created']}, updated {tally['updated']}, "
@@ -344,6 +355,7 @@ def _push_to_outlook(args, path, result) -> int:
             keep_dates=args.keep_dates,
             limit=args.limit,
             reminder_minutes=args.alarm,
+            response_requested=not args.no_response,
             on_progress=lambda outcome: print(outcome),
         )
     except OutlookError as exc:

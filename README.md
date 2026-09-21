@@ -181,6 +181,13 @@ the same way.
 python -m autocalendar programme.xlsx --outlook --test-mode --keep-dates --send
 ```
 
+The purge works in three phases: cancel each meeting once, **wait until the Outbox has actually
+sent the cancellations**, then delete. It never touches the Outbox. (An earlier version swept the
+Outbox along with everything else and deleted its own queued cancellations, so most attendees were
+never told.) If Outlook is offline and the Outbox does not drain, nothing is deleted.
+
+For **placeholders**, add `--no-response`: attendees get no "Please respond" and you get no replies.
+
 ### What this needs
 
 Windows, with **classic** Outlook installed, running and signed in. The new Outlook

@@ -441,6 +441,128 @@ class FakeItem:
         self.Recipients = FakeRecipients(kw.get("people", []))
 
 
+class _FakeFolder:
+    def __init__(self, name, items=None):
+        self.Name, self.EntryID = name, name
+        self._items = list(items or [])
+        self.Folders = []
+
+    @property
+    def Items(self):
+        folder = self
+
+        class _Items(list):
+            def Restrict(self, _query):
+                return list(folder._items)
+
+        return _Items(folder._items)
+
+
+class _FakeMeeting:
+    """An organiser meeting. Send() queues a cancellation in the Outbox."""
+
+    def __init__(self, n, outbox):
+        self.Subject = f"{TEST_MARKER} Session {n}"
+        self.Categories = TEST_CATEGORY
+        self.MeetingStatus = 1
+        self.GlobalAppointmentID = f"g{n}"
+        self.Recipients = FakeRecipients(["someone@example.invalid"])
+        self._outbox, self.deleted, self.sends = outbox, False, 0
+
+    def Save(self):
+        pass
+
+    def Send(self):
+        self.sends += 1
+        self._outbox._items.append(_FakeMail(f"Canceled: {self.Subject}", self._outbox))
+
+    def Delete(self):
+        self.deleted = True
+        for folder in _FakeStore.folders:
+            if self in folder._items:
+                folder._items.remove(self)
+
+
+class _FakeMail:
+    def __init__(self, subject, folder):
+        self.Subject, self.Categories, self._folder = subject, "", folder
+        self.deleted_unsent = False
+
+    def Delete(self):
+        if self in self._folder._items and self._folder.Name == "Outbox":
+            self.deleted_unsent = True
+        self._folder._items.remove(self)
+
+
+class _FakeStore:
+    folders: list = []
+
+    def __init__(self, calendar, outbox, sent):
+        self._root = _FakeFolder("root")
+        self._root.Folders = [calendar, outbox, sent]
+        self._outbox = outbox
+        _FakeStore.folders = [calendar, outbox, sent]
+
+    def GetRootFolder(self):
+        return self._root
+
+    def GetDefaultFolder(self, n):
+        return self._outbox
+
+
+class _FakeNamespace:
+    """SendAndReceive moves everything queued in the Outbox to Sent Items."""
+
+    def __init__(self, n_meetings):
+        self.outbox, self.sent = _FakeFolder("Outbox"), _FakeFolder("Sent")
+        self.calendar = _FakeFolder("Calendar")
+        self.meetings = [_FakeMeeting(i, self.outbox) for i in range(n_meetings)]
+        self.calendar._items = list(self.meetings)
+        self.Stores = [_FakeStore(self.calendar, self.outbox, self.sent)]
+        self.sent_mail = []
+
+    def SendAndReceive(self, _show):
+        for mail in list(self.outbox._items):
+            self.outbox._items.remove(mail)
+            mail._folder = self.sent
+            self.sent._items.append(mail)
+            self.sent_mail.append(mail)
+
+
+class TestPurge(unittest.TestCase):
+    """The 2026-09-21 bug: the purge deleted its own queued cancellations."""
+
+    def run_purge(self, n=5):
+        from autocalendar.outlook import purge_tests
+
+        ns = _FakeNamespace(n)
+        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0, outbox_timeout=1)
+        return ns, counts
+
+    def test_every_attendee_is_told_exactly_once(self):
+        ns, counts = self.run_purge()
+        self.assertEqual(counts["cancelled"], 5)
+        self.assertEqual([m.sends for m in ns.meetings], [1] * 5)
+        self.assertEqual(len(ns.sent_mail), 5)
+        self.assertFalse(any(m.deleted_unsent for m in ns.sent_mail))
+
+    def test_everything_is_gone_afterwards(self):
+        ns, counts = self.run_purge()
+        self.assertEqual(counts["remaining"], 0)
+        self.assertTrue(all(m.deleted for m in ns.meetings))
+        self.assertEqual(ns.sent._items, [])  # the sent cancellations are tidied up too
+
+    def test_nothing_is_deleted_while_the_outbox_is_stuck(self):
+        from autocalendar.outlook import purge_tests
+
+        ns = _FakeNamespace(3)
+        ns.SendAndReceive = lambda _show: None  # offline: nothing ever leaves
+        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0.01, outbox_timeout=0.05)
+        self.assertEqual(counts["outbox_stuck"], 3)
+        self.assertEqual(counts["deleted"], 0)
+        self.assertEqual(len(ns.outbox._items), 3)  # still queued, not destroyed
+
+
 class TestAllDayWrite(unittest.TestCase):
     """A multi-day all-day event must keep its span when written to Outlook."""
 

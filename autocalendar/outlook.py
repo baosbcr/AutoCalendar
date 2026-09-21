@@ -199,6 +199,7 @@ def push(
     keep_dates: bool = False,
     limit: int | None = None,
     reminder_minutes: int | None = None,
+    response_requested: bool = True,
     pace: float = SEND_INTERVAL,
     on_progress=None,
 ) -> list[Outcome]:
@@ -255,6 +256,9 @@ def push(
             unresolved: list[str] = []
             if event.has_attendees:
                 item.MeetingStatus = OL_MEETING
+                # Off for placeholders: attendees see no "Please respond" and
+                # the organiser gets no flood of replies.
+                item.ResponseRequested = response_requested
                 if account is not None:
                     item.SendUsingAccount = account
                 people = [(p, OL_REQUIRED) for p in event.required]
@@ -341,69 +345,155 @@ def _is_test_item(item) -> bool:
         return False
 
 
+OL_FOLDER_OUTBOX = 4
+
+
+def _outbox_ids(namespace) -> set[str]:
+    ids = set()
+    for store in namespace.Stores:
+        try:
+            ids.add(store.GetDefaultFolder(OL_FOLDER_OUTBOX).EntryID)
+        except Exception:
+            continue
+    return ids
+
+
+def _test_items(namespace, outboxes: set[str], *, include_outbox: bool = False):
+    """(folder, item) for every test item outside the Outbox - or, with
+    ``include_outbox``, only those inside it. What sits in the Outbox is mail not
+    yet sent; deleting it silently un-sends it."""
+    for store in namespace.Stores:
+        try:
+            root = store.GetRootFolder()
+        except Exception:
+            continue
+        for folder in _walk(root):
+            try:
+                in_outbox = folder.EntryID in outboxes
+            except Exception:
+                in_outbox = False
+            if in_outbox != include_outbox:
+                continue
+            for item in _candidates(folder):
+                if _is_test_item(item):
+                    yield folder, item
+
+
+def _meeting_key(item) -> str:
+    for attr in ("GlobalAppointmentID", "EntryID"):
+        try:
+            value = getattr(item, attr)
+            if value:
+                return str(value)
+        except Exception:
+            continue
+    return str(id(item))
+
+
 def purge_tests(
-    *, apply: bool = False, max_passes: int = 6, on_progress=None
+    *,
+    apply: bool = False,
+    max_passes: int = 6,
+    on_progress=None,
+    namespace=None,
+    pace: float = SEND_INTERVAL,
+    outbox_timeout: float = 600,
+    poll: float = 5,
 ) -> dict[str, int]:
     """Remove every trace of a test run, from every mailbox and every folder.
 
-    Organiser meetings are cancelled before deletion, so attendees are told
-    the meeting is gone rather than left holding a ghost.
+    Three phases, in this order, because each one depends on the last:
 
-    It sweeps repeatedly rather than a fixed number of times. Each pass
-    generates the very cancellation notices the next pass has to collect, and
-    Outlook does not always delete everything asked of it first time - a real
-    run needed three passes to reach zero, having been written assuming two.
+    1. **Cancel** every organiser meeting, once each, paced like sending, so
+       attendees are told the meeting is gone rather than left holding a ghost.
+    2. **Wait** until the Outbox has actually sent those cancellations. Exchange
+       throttles at ~30 messages a minute, so they queue.
+    3. **Delete** every test item, in every folder except the Outbox, in
+       repeated passes (Outlook does not always delete everything first time).
 
-    Sent Items is included. The first cleanup written for this project missed
-    it and left the request and the cancellation sitting there.
+    The first version did all three in one sweep and swept the Outbox too: pass
+    two found the queued "Canceled: [AUTOCAL-TEST] ..." messages by their tag and
+    deleted them before they left, so most attendees were never told (2026-09-21:
+    only the first handful of 73 cancellations reached the attendee).
+
+    If the Outbox does not drain within ``outbox_timeout`` seconds nothing is
+    deleted - better a leftover test item than an attendee with a ghost meeting.
+
+    Sent Items is included in phase 3. The first cleanup written for this project
+    missed it and left the request and the cancellation sitting there.
     """
-    _, namespace = connect()
-    counts = {"found": 0, "cancelled": 0, "deleted": 0, "remaining": 0, "passes": 0}
+    if namespace is None:
+        _, namespace = connect()
+    outboxes = _outbox_ids(namespace)
+    counts = {"found": 0, "cancelled": 0, "deleted": 0, "remaining": 0, "passes": 0,
+              "outbox_stuck": 0}
 
-    def sweep(delete: bool) -> int:
-        seen = 0
-        for store in namespace.Stores:
-            try:
-                root = store.GetRootFolder()
-            except Exception:
-                continue
-            for folder in _walk(root):
-                for item in _candidates(folder):
-                    if not _is_test_item(item):
-                        continue
-                    seen += 1
-                    if not delete:
-                        continue
-                    try:
-                        is_meeting = (
-                            getattr(item, "MeetingStatus", 0) == OL_MEETING
-                            and item.Recipients.Count > 0
-                        )
-                    except Exception:
-                        is_meeting = False
-                    try:
-                        if on_progress:
-                            on_progress(folder, item)
-                        if is_meeting:
-                            item.MeetingStatus = OL_MEETING_CANCELED
-                            item.Save()
-                            item.Send()
-                            counts["cancelled"] += 1
-                        item.Delete()
-                        counts["deleted"] += 1
-                    except Exception:
-                        continue
-        return seen
+    def count() -> int:
+        return sum(1 for _ in _test_items(namespace, outboxes))
 
-    counts["found"] = sweep(delete=False)
+    counts["found"] = count()
     if not apply:
         counts["remaining"] = counts["found"]
         return counts
 
+    # 1. cancel, once per meeting
+    cancelled: set[str] = set()
+    for folder, item in list(_test_items(namespace, outboxes)):
+        try:
+            is_meeting = (
+                getattr(item, "MeetingStatus", 0) == OL_MEETING
+                and item.Recipients.Count > 0
+            )
+        except Exception:
+            is_meeting = False
+        if not is_meeting:
+            continue
+        key = _meeting_key(item)
+        if key in cancelled:
+            continue
+        try:
+            if on_progress:
+                on_progress(folder, item)
+            item.MeetingStatus = OL_MEETING_CANCELED
+            item.Save()
+            item.Send()
+            cancelled.add(key)
+            counts["cancelled"] += 1
+            if pace:
+                time.sleep(pace)
+        except Exception:
+            continue
+
+    # 2. wait for the Outbox to empty of test mail
+    def queued() -> int:
+        return sum(1 for _ in _test_items(namespace, outboxes, include_outbox=True))
+
+    waited = 0.0
+    while queued():
+        if waited >= outbox_timeout:
+            counts["outbox_stuck"] = queued()
+            counts["remaining"] = count()
+            return counts
+        try:
+            namespace.SendAndReceive(False)
+        except Exception:
+            pass
+        time.sleep(poll)
+        waited += poll
+
+    # 3. delete, never touching the Outbox
+    remaining = counts["found"]
     for attempt in range(1, max_passes + 1):
-        sweep(delete=True)
-        time.sleep(2)  # let the cancellations this pass sent arrive
-        remaining = sweep(delete=False)
+        for folder, item in list(_test_items(namespace, outboxes)):
+            try:
+                if on_progress:
+                    on_progress(folder, item)
+                item.Delete()
+                counts["deleted"] += 1
+            except Exception:
+                continue
+        time.sleep(poll if pace else 0)
+        remaining = count()
         counts["passes"] = attempt
         if not remaining:
             break

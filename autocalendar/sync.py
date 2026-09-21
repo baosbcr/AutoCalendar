@@ -253,7 +253,9 @@ def describe(plan: Plan) -> str:
     return "\n".join(lines)
 
 
-def apply_plan(plan: Plan, folder, *, send: bool = False, on_progress=None) -> dict:
+def apply_plan(
+    plan: Plan, folder, *, send: bool = False, response_requested: bool = True, on_progress=None
+) -> dict:
     """Carry out a plan. Only sends where the change warrants it."""
     from .outlook import OL_MEETING, OL_MEETING_CANCELED, OL_REQUIRED, OL_OPTIONAL
 
@@ -279,6 +281,7 @@ def apply_plan(plan: Plan, folder, *, send: bool = False, on_progress=None) -> d
                 _stamp_id(item, change.event)
                 if change.event.required or change.event.optional:
                     item.MeetingStatus = OL_MEETING
+                    item.ResponseRequested = response_requested
                     for who in change.event.required:
                         item.Recipients.Add(who).Type = OL_REQUIRED
                     for who in change.event.optional:
