@@ -539,7 +539,9 @@ def purge_tests(
     # Send() then re-sent 40 of them as plain invitations.
     targets = []
     for folder, item in _test_items(namespace, outboxes, mailbox=mailbox):
-        if _is_live_organiser_meeting(item):
+        # A meeting in Deleted Items or Sync Issues is already off the calendar;
+        # cancelling it again would only send attendees a duplicate.
+        if _is_live_organiser_meeting(item) and str(folder.EntryID) not in safe_folders:
             try:
                 targets.append((str(item.EntryID), str(folder.StoreID)))
             except Exception:

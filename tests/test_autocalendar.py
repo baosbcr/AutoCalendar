@@ -518,6 +518,7 @@ class _FakeStore:
         self.DisplayName = name
         self._root = _FakeFolder("root")
         self._root.Folders = [calendar, outbox, sent]
+        self.deleted_items = None
         self._outbox = outbox
         _FakeStore.folders = [calendar, outbox, sent]
 
@@ -525,7 +526,13 @@ class _FakeStore:
         return self._root
 
     def GetDefaultFolder(self, n):
-        return self._outbox if n == 4 else _FakeStore.folders[2]
+        if n == 4:
+            return self._outbox
+        if n == 5:
+            return _FakeStore.folders[2]
+        if n == 3 and getattr(self, "deleted_items", None) is not None:
+            return self.deleted_items
+        raise LookupError(n)
 
 
 class _FakeNamespace:
@@ -540,7 +547,7 @@ class _FakeNamespace:
         self.sent_mail = []
 
     def GetItemFromID(self, entry_id, _store_id):
-        for folder in (self.calendar, self.outbox, self.sent):
+        for folder in _FakeStore.folders:
             for item in folder._items:
                 if item.EntryID == entry_id:
                     return item
@@ -620,6 +627,27 @@ class TestPurge(unittest.TestCase):
         self.assertEqual(counts["resent"], 1)
         self.assertEqual(sum(m.sends for m in ns.meetings), 1)  # nobody else was touched
         self.assertFalse(any(m.deleted for m in ns.meetings))
+
+    def test_leftovers_in_deleted_items_are_cleared_without_mail(self):
+        """An organiser copy already in Deleted Items still looks live. It must be
+        deleted, and never cancelled again (that would mail the attendee twice)."""
+        from autocalendar.outlook import purge_tests
+
+        ns = _FakeNamespace(2)
+        store = ns.Stores[0]
+        bin_ = _FakeFolder("Deleted Items")
+        store.deleted_items = bin_
+        store._root.Folders.append(bin_)
+        _FakeStore.folders.append(bin_)
+        leftover = ns.meetings[1]
+        ns.calendar._items.remove(leftover)
+        bin_._items.append(leftover)
+        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0, outbox_timeout=1,
+                             verify_timeout=0)
+        self.assertEqual(leftover.sends, 0)
+        self.assertTrue(leftover.deleted)
+        self.assertEqual(counts["cancelled"], 1)  # only the real calendar meeting
+        self.assertEqual(counts["remaining"], 0)
 
     def test_mailbox_filter_leaves_other_mailboxes_alone(self):
         from autocalendar.outlook import purge_tests
