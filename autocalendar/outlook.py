@@ -241,6 +241,9 @@ def push(
             if event.all_day:
                 item.AllDayEvent = True
                 item.Start = event.start.strftime("%Y-%m-%d")
+                # The sheet's end date is inclusive; Outlook's End is the midnight after it.
+                # Without this a multi-day event collapses to its first day.
+                item.End = (event.end + dt.timedelta(days=1)).strftime("%Y-%m-%d")
             else:
                 item.Start = event.start.strftime("%Y-%m-%d %H:%M")
                 item.End = event.end.strftime("%Y-%m-%d %H:%M")

@@ -327,6 +327,8 @@ def _write(item, event: Event) -> None:
     if event.all_day:
         item.AllDayEvent = True
         item.Start = event.start.strftime("%Y-%m-%d")
+        # inclusive sheet end -> Outlook's exclusive End (see outlook.push)
+        item.End = (event.end + dt.timedelta(days=1)).strftime("%Y-%m-%d")
     else:
         item.Start = event.start.strftime("%Y-%m-%d %H:%M")
         item.End = event.end.strftime("%Y-%m-%d %H:%M")

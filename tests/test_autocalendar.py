@@ -441,6 +441,32 @@ class FakeItem:
         self.Recipients = FakeRecipients(kw.get("people", []))
 
 
+class TestAllDayWrite(unittest.TestCase):
+    """A multi-day all-day event must keep its span when written to Outlook."""
+
+    def test_inclusive_sheet_end_becomes_outlooks_exclusive_end(self):
+        from autocalendar.sync import _write
+
+        item = FakeItem()
+        event = Event(
+            title="Live stream",
+            start=dt.date(2027, 1, 4),
+            end=dt.date(2027, 1, 22),  # last day, inclusive
+        )
+        _write(item, event)
+        self.assertTrue(item.AllDayEvent)
+        self.assertEqual(item.Start, "2027-01-04")
+        self.assertEqual(item.End, "2027-01-23")
+
+    def test_single_day(self):
+        from autocalendar.sync import _write
+
+        item = FakeItem()
+        day = dt.date(2027, 1, 12)
+        _write(item, Event(title="Check-in", start=day, end=day))
+        self.assertEqual(item.End, "2027-01-13")
+
+
 def sheet_event(**kw):
     return Event(
         title=kw.get("title", "Kick-off"),
