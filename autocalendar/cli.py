@@ -114,6 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="shift everything into a tagged 2099 window that --purge-tests can remove",
     )
     outlook.add_argument(
+        "--keep-dates",
+        action="store_true",
+        help="with --test-mode: keep the real dates, still tagged so --purge-tests removes them",
+    )
+    outlook.add_argument(
         "--mailbox", metavar="ADDRESS", help="which mailbox to use (default: the first)"
     )
     outlook.add_argument(
@@ -251,7 +256,7 @@ def _sync_with_outlook(args, path, result) -> int:
     if args.test_mode:
         from .outlook import shift_to_test_window
 
-        events = shift_to_test_window(events)
+        events = shift_to_test_window(events, keep_dates=args.keep_dates)
 
     try:
         _, namespace = connect()
@@ -315,7 +320,9 @@ def _push_to_outlook(args, path, result) -> int:
     total = len(selected)
 
     print()
-    if args.test_mode:
+    if args.test_mode and args.keep_dates:
+        print("TEST MODE - real dates kept, everything tagged for --purge-tests.")
+    elif args.test_mode:
         print("TEST MODE - everything is shifted into 2099 and tagged for --purge-tests.")
     if args.send:
         print(f"About to create {total} event(s) and SEND invitations for {with_people}.")
@@ -334,6 +341,7 @@ def _push_to_outlook(args, path, result) -> int:
             calendar=args.calendar,
             send=args.send,
             test_mode=args.test_mode,
+            keep_dates=args.keep_dates,
             limit=args.limit,
             reminder_minutes=args.alarm,
             on_progress=lambda outcome: print(outcome),
@@ -365,6 +373,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.timezones:
         print("\n".join(supported_timezones()))
         return 0
+
+    if args.keep_dates and not args.test_mode:
+        print("error: --keep-dates only makes sense with --test-mode", file=sys.stderr)
+        return 2
 
     if args.list_calendars or args.purge_tests:
         return _outlook_only(args)

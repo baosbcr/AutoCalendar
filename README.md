@@ -173,6 +173,14 @@ python -m autocalendar programme.xlsx --outlook --test-mode
 python -m autocalendar --purge-tests
 ```
 
+To rehearse on the **real dates** instead - fine when every attendee is in on the test - add
+`--keep-dates`. Items keep their dates but are still tagged, so `--purge-tests` removes them
+the same way.
+
+```powershell
+python -m autocalendar programme.xlsx --outlook --test-mode --keep-dates --send
+```
+
 ### What this needs
 
 Windows, with **classic** Outlook installed, running and signed in. The new Outlook

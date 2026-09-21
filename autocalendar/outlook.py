@@ -130,12 +130,16 @@ def list_calendars(mailbox: str | None = None) -> list[str]:
     return [str(default.Name)] + [str(s.Name) for s in default.Folders]
 
 
-def shift_to_test_window(events: Sequence[Event]) -> list[Event]:
+def shift_to_test_window(events: Sequence[Event], keep_dates: bool = False) -> list[Event]:
     """Move a whole programme into the test window, keeping its shape.
 
     Relative day offsets and times of day are preserved, so a run over the
     real 117-row programme exercises the same code paths - it just lands in
     2099, where nothing can be mistaken for real work.
+
+    With ``keep_dates`` the events stay on their real dates but are still
+    tagged, so --purge-tests can remove them. For rehearsing with the real
+    dates when every attendee is in on the test.
     """
 
     def as_date(moment):
@@ -147,7 +151,7 @@ def shift_to_test_window(events: Sequence[Event]) -> list[Event]:
     # raw day count moved the August programme onto weekends, which makes a
     # rehearsal look nothing like the real thing.
     gap = (TEST_BASE - min(as_date(e.start) for e in events)).days
-    delta = dt.timedelta(days=-(-gap // 7) * 7)
+    delta = dt.timedelta(0) if keep_dates else dt.timedelta(days=-(-gap // 7) * 7)
     shifted = []
     for event in events:
         clone = copy.deepcopy(event)
@@ -192,6 +196,7 @@ def push(
     calendar: str | None = None,
     send: bool = False,
     test_mode: bool = False,
+    keep_dates: bool = False,
     limit: int | None = None,
     reminder_minutes: int | None = None,
     pace: float = SEND_INTERVAL,
@@ -206,7 +211,7 @@ def push(
     the second one needs mail to leave the building.
     """
     if test_mode:
-        events = shift_to_test_window(events)
+        events = shift_to_test_window(events, keep_dates=keep_dates)
     if limit is not None:
         events = list(events)[:limit]
 

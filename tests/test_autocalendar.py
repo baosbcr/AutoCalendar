@@ -407,6 +407,15 @@ class TestTestWindow(unittest.TestCase):
     def test_empty_input(self):
         self.assertEqual(shift_to_test_window([]), [])
 
+    def test_keep_dates_stays_put_but_is_still_purgeable(self):
+        """Rehearsing on the real dates must still leave --purge-tests a way in."""
+        kept = shift_to_test_window(self.events, keep_dates=True)
+        for original, event in zip(self.events, kept):
+            self.assertEqual(event.start, original.start)
+            self.assertEqual(event.end, original.end)
+            self.assertIn(TEST_CATEGORY, event.categories)
+            self.assertTrue(event.title.startswith(TEST_MARKER))
+
 
 class FakeRecipients:
     def __init__(self, addresses):
