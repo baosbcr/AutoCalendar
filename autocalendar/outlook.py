@@ -92,6 +92,11 @@ def find_store(namespace, mailbox: str | None):
     if not mailbox:
         return stores[0]
     wanted = mailbox.strip().lower()
+    # Exact name first: "Public Folders - you@dtu.dk" also *contains* your address,
+    # and it is often listed before the mailbox itself.
+    for store in stores:
+        if str(store.DisplayName).strip().lower() == wanted:
+            return store
     for store in stores:
         if wanted in str(store.DisplayName).lower():
             return store
@@ -393,6 +398,16 @@ def _test_items(
                     yield folder, item
 
 
+def _is_live_organiser_meeting(item) -> bool:
+    try:
+        return (
+            getattr(item, "MeetingStatus", 0) == OL_MEETING
+            and item.Recipients.Count > 0
+        )
+    except Exception:
+        return False
+
+
 def _meeting_key(item) -> str:
     for attr in ("GlobalAppointmentID", "EntryID"):
         try:
@@ -445,8 +460,8 @@ def purge_tests(
     if namespace is None:
         _, namespace = connect()
     outboxes = _outbox_ids(namespace, mailbox)
-    counts = {"found": 0, "cancelled": 0, "deleted": 0, "remaining": 0, "passes": 0,
-              "outbox_stuck": 0}
+    counts = {"found": 0, "cancelled": 0, "cancel_failed": 0, "deleted": 0, "remaining": 0,
+              "passes": 0, "outbox_stuck": 0}
 
     def count() -> int:
         return sum(1 for _ in _test_items(namespace, outboxes, mailbox=mailbox))
@@ -456,32 +471,44 @@ def purge_tests(
         counts["remaining"] = counts["found"]
         return counts
 
-    # 1. cancel, once per meeting
+    # 1. cancel, once per meeting. Collect ids first and open one item at a time:
+    # holding every item open at once is what went wrong on 2026-09-21 - after
+    # 33 meetings Outlook silently stopped applying the "cancelled" status, and
+    # Send() then re-sent 40 of them as plain invitations.
+    targets = []
+    for folder, item in _test_items(namespace, outboxes, mailbox=mailbox):
+        if _is_live_organiser_meeting(item):
+            try:
+                targets.append((str(item.EntryID), str(folder.StoreID)))
+            except Exception:
+                continue
+        del item
     cancelled: set[str] = set()
-    for folder, item in list(_test_items(namespace, outboxes, mailbox=mailbox)):
+    for entry_id, store_id in targets:
         try:
-            is_meeting = (
-                getattr(item, "MeetingStatus", 0) == OL_MEETING
-                and item.Recipients.Count > 0
-            )
-        except Exception:
-            is_meeting = False
-        if not is_meeting:
-            continue
-        key = _meeting_key(item)
-        if key in cancelled:
-            continue
-        try:
+            item = namespace.GetItemFromID(entry_id, store_id)
+            key = _meeting_key(item)
+            if key in cancelled or not _is_live_organiser_meeting(item):
+                continue
             if on_progress:
-                on_progress(folder, item)
+                on_progress(None, item)
             item.MeetingStatus = OL_MEETING_CANCELED
             item.Save()
+            del item
+            # Read it back. Send() on a meeting that is not really cancelled
+            # re-sends the invitation, which is the one thing a purge must never do.
+            item = namespace.GetItemFromID(entry_id, store_id)
+            if getattr(item, "MeetingStatus", None) != OL_MEETING_CANCELED:
+                counts["cancel_failed"] += 1
+                continue
             item.Send()
             cancelled.add(key)
             counts["cancelled"] += 1
+            del item
             if pace:
                 time.sleep(pace)
         except Exception:
+            counts["cancel_failed"] += 1
             continue
 
     # 2. wait for the Outbox to empty of test mail
@@ -501,14 +528,26 @@ def purge_tests(
         time.sleep(poll)
         waited += poll
 
-    # 3. delete, never touching the Outbox
+    # 3. delete, never touching the Outbox, and never a live organiser meeting:
+    # deleting one of those unsent-cancelled leaves attendees holding a ghost
+    # that nobody can cancel any more. It stays behind for the next run.
     remaining = counts["found"]
     for attempt in range(1, max_passes + 1):
-        for folder, item in list(_test_items(namespace, outboxes, mailbox=mailbox)):
+        ids = []
+        for folder, item in _test_items(namespace, outboxes, mailbox=mailbox):
+            if not _is_live_organiser_meeting(item):
+                try:
+                    ids.append((str(item.EntryID), str(folder.StoreID)))
+                except Exception:
+                    pass
+            del item
+        for entry_id, store_id in ids:
             try:
+                item = namespace.GetItemFromID(entry_id, store_id)
                 if on_progress:
-                    on_progress(folder, item)
+                    on_progress(None, item)
                 item.Delete()
+                del item
                 counts["deleted"] += 1
             except Exception:
                 continue

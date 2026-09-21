@@ -270,6 +270,11 @@ def apply_plan(
                 if change.detail.startswith("meeting") and send:
                     item.MeetingStatus = OL_MEETING_CANCELED
                     item.Save()
+                    # Outlook can silently ignore the status change; Send() would then
+                    # re-send the invitation. Skip it and leave the meeting in place.
+                    if getattr(item, "MeetingStatus", None) != OL_MEETING_CANCELED:
+                        tally["failed"] += 1
+                        continue
                     item.Send()
                     tally["notified"] += change.people
                 item.Delete()

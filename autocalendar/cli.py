@@ -232,6 +232,11 @@ def _outlook_only(args) -> int:
             f"\nCancelled {counts['cancelled']}, deleted {counts['deleted']} "
             f"in {counts['passes']} pass(es), {counts['remaining']} remaining."
         )
+        if counts.get("cancel_failed"):
+            print(
+                f"{counts['cancel_failed']} meeting(s) could not be cancelled and were left in "
+                "place (not sent, not deleted). Run --purge-tests again."
+            )
         if counts.get("outbox_stuck"):
             print(
                 f"{counts['outbox_stuck']} cancellation(s) are still in the Outbox, so nothing "

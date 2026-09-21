@@ -443,7 +443,7 @@ class FakeItem:
 
 class _FakeFolder:
     def __init__(self, name, items=None):
-        self.Name, self.EntryID = name, name
+        self.Name, self.EntryID, self.StoreID = name, name, "store"
         self._items = list(items or [])
         self.Folders = []
 
@@ -461,20 +461,31 @@ class _FakeFolder:
 class _FakeMeeting:
     """An organiser meeting. Send() queues a cancellation in the Outbox."""
 
-    def __init__(self, n, outbox):
+    def __init__(self, n, outbox, stubborn=False):
         self.Subject = f"{TEST_MARKER} Session {n}"
         self.Categories = TEST_CATEGORY
-        self.MeetingStatus = 1
+        self.EntryID = f"m{n}"
+        self._status, self._stubborn = 1, stubborn
         self.GlobalAppointmentID = f"g{n}"
         self.Recipients = FakeRecipients(["someone@example.invalid"])
         self._outbox, self.deleted, self.sends = outbox, False, 0
+
+    @property
+    def MeetingStatus(self):
+        return self._status
+
+    @MeetingStatus.setter
+    def MeetingStatus(self, value):
+        if not self._stubborn:  # the 2026-09-21 failure: the set is silently ignored
+            self._status = value
 
     def Save(self):
         pass
 
     def Send(self):
         self.sends += 1
-        self._outbox._items.append(_FakeMail(f"Canceled: {self.Subject}", self._outbox))
+        kind = "Canceled" if self._status == 5 else "Invitation"
+        self._outbox._items.append(_FakeMail(f"{kind}: {self.Subject}", self._outbox))
 
     def Delete(self):
         self.deleted = True
@@ -484,8 +495,12 @@ class _FakeMeeting:
 
 
 class _FakeMail:
+    _n = 0
+
     def __init__(self, subject, folder):
         self.Subject, self.Categories, self._folder = subject, "", folder
+        _FakeMail._n += 1
+        self.EntryID = f"x{_FakeMail._n}"
         self.deleted_unsent = False
 
     def Delete(self):
@@ -514,13 +529,20 @@ class _FakeStore:
 class _FakeNamespace:
     """SendAndReceive moves everything queued in the Outbox to Sent Items."""
 
-    def __init__(self, n_meetings):
+    def __init__(self, n_meetings, stubborn=()):
         self.outbox, self.sent = _FakeFolder("Outbox"), _FakeFolder("Sent")
         self.calendar = _FakeFolder("Calendar")
-        self.meetings = [_FakeMeeting(i, self.outbox) for i in range(n_meetings)]
+        self.meetings = [_FakeMeeting(i, self.outbox, i in stubborn) for i in range(n_meetings)]
         self.calendar._items = list(self.meetings)
         self.Stores = [_FakeStore(self.calendar, self.outbox, self.sent)]
         self.sent_mail = []
+
+    def GetItemFromID(self, entry_id, _store_id):
+        for folder in (self.calendar, self.outbox, self.sent):
+            for item in folder._items:
+                if item.EntryID == entry_id:
+                    return item
+        raise LookupError(entry_id)
 
     def SendAndReceive(self, _show):
         for mail in list(self.outbox._items):
@@ -562,6 +584,20 @@ class TestPurge(unittest.TestCase):
         self.assertEqual(counts["outbox_stuck"], 3)
         self.assertEqual(counts["deleted"], 0)
         self.assertEqual(len(ns.outbox._items), 3)  # still queued, not destroyed
+
+    def test_a_cancel_that_does_not_stick_is_never_sent_or_deleted(self):
+        """Never re-send an invitation, never orphan an attendee's copy."""
+        from autocalendar.outlook import purge_tests
+
+        ns = _FakeNamespace(4, stubborn={2})
+        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0, outbox_timeout=1)
+        stubborn = ns.meetings[2]
+        self.assertEqual(stubborn.sends, 0)
+        self.assertFalse(stubborn.deleted)
+        self.assertEqual(counts["cancel_failed"], 1)
+        self.assertEqual(counts["cancelled"], 3)
+        self.assertFalse(any(m.Subject.startswith("Invitation") for m in ns.sent_mail))
+        self.assertEqual(counts["remaining"], 1)
 
     def test_mailbox_filter_leaves_other_mailboxes_alone(self):
         from autocalendar.outlook import purge_tests
