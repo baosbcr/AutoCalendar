@@ -497,7 +497,8 @@ class _FakeMail:
 class _FakeStore:
     folders: list = []
 
-    def __init__(self, calendar, outbox, sent):
+    def __init__(self, calendar, outbox, sent, name="organiser@example.invalid"):
+        self.DisplayName = name
         self._root = _FakeFolder("root")
         self._root.Folders = [calendar, outbox, sent]
         self._outbox = outbox
@@ -561,6 +562,15 @@ class TestPurge(unittest.TestCase):
         self.assertEqual(counts["outbox_stuck"], 3)
         self.assertEqual(counts["deleted"], 0)
         self.assertEqual(len(ns.outbox._items), 3)  # still queued, not destroyed
+
+    def test_mailbox_filter_leaves_other_mailboxes_alone(self):
+        from autocalendar.outlook import purge_tests
+
+        ns = _FakeNamespace(2)
+        counts = purge_tests(apply=True, namespace=ns, mailbox="someone-else@example.invalid",
+                             pace=0, poll=0, outbox_timeout=1)
+        self.assertEqual(counts["found"], 0)
+        self.assertFalse(any(m.deleted for m in ns.meetings))
 
 
 class TestAllDayWrite(unittest.TestCase):

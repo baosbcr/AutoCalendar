@@ -150,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     outlook.add_argument(
         "--purge-tests",
         action="store_true",
-        help="cancel and delete every test item from every mailbox and folder",
+        help="cancel and delete every test item (every mailbox, or only --mailbox)",
     )
     outlook.add_argument(
         "--yes", action="store_true", help="skip the confirmation prompt for --send / --purge-tests"
@@ -212,16 +212,18 @@ def _outlook_only(args) -> int:
                 print(f"  {name}")
             return 0
 
-        found = purge_tests(apply=False)["found"]
+        found = purge_tests(apply=False, mailbox=args.mailbox)["found"]
         if not found:
             print("No test items found. Nothing to purge.")
             return 0
-        print(f"Found {found} test item(s) across all mailboxes and folders.")
+        where = args.mailbox or "all mailboxes"
+        print(f"Found {found} test item(s) in {where}.")
         if not _confirm("Cancel and delete them?", args.yes):
             print("Nothing changed.")
             return 0
         counts = purge_tests(
             apply=True,
+            mailbox=args.mailbox,
             on_progress=lambda folder, item: print(
                 f"  - {getattr(item, 'Subject', '?')[:60]}"
             ),

@@ -348,9 +348,21 @@ def _is_test_item(item) -> bool:
 OL_FOLDER_OUTBOX = 4
 
 
-def _outbox_ids(namespace) -> set[str]:
-    ids = set()
+def _stores(namespace, mailbox: str | None = None):
+    """Every store, or only the one whose name or address matches ``mailbox``."""
+    wanted = mailbox.strip().lower() if mailbox else None
     for store in namespace.Stores:
+        try:
+            name = str(store.DisplayName).strip().lower()
+        except Exception:
+            name = ""
+        if wanted is None or name == wanted:
+            yield store
+
+
+def _outbox_ids(namespace, mailbox: str | None = None) -> set[str]:
+    ids = set()
+    for store in _stores(namespace, mailbox):
         try:
             ids.add(store.GetDefaultFolder(OL_FOLDER_OUTBOX).EntryID)
         except Exception:
@@ -358,11 +370,13 @@ def _outbox_ids(namespace) -> set[str]:
     return ids
 
 
-def _test_items(namespace, outboxes: set[str], *, include_outbox: bool = False):
+def _test_items(
+    namespace, outboxes: set[str], *, include_outbox: bool = False, mailbox: str | None = None
+):
     """(folder, item) for every test item outside the Outbox - or, with
     ``include_outbox``, only those inside it. What sits in the Outbox is mail not
     yet sent; deleting it silently un-sends it."""
-    for store in namespace.Stores:
+    for store in _stores(namespace, mailbox):
         try:
             root = store.GetRootFolder()
         except Exception:
@@ -396,6 +410,7 @@ def purge_tests(
     max_passes: int = 6,
     on_progress=None,
     namespace=None,
+    mailbox: str | None = None,
     pace: float = SEND_INTERVAL,
     outbox_timeout: float = 600,
     poll: float = 5,
@@ -419,17 +434,22 @@ def purge_tests(
     If the Outbox does not drain within ``outbox_timeout`` seconds nothing is
     deleted - better a leftover test item than an attendee with a ghost meeting.
 
+    ``mailbox`` limits all of this to one mailbox. Without it every mailbox in
+    the profile is swept, which removes the attendee side too when a test
+    recipient's mailbox is also open in this Outlook - but also removes their
+    cancellations before anyone has checked they arrived.
+
     Sent Items is included in phase 3. The first cleanup written for this project
     missed it and left the request and the cancellation sitting there.
     """
     if namespace is None:
         _, namespace = connect()
-    outboxes = _outbox_ids(namespace)
+    outboxes = _outbox_ids(namespace, mailbox)
     counts = {"found": 0, "cancelled": 0, "deleted": 0, "remaining": 0, "passes": 0,
               "outbox_stuck": 0}
 
     def count() -> int:
-        return sum(1 for _ in _test_items(namespace, outboxes))
+        return sum(1 for _ in _test_items(namespace, outboxes, mailbox=mailbox))
 
     counts["found"] = count()
     if not apply:
@@ -438,7 +458,7 @@ def purge_tests(
 
     # 1. cancel, once per meeting
     cancelled: set[str] = set()
-    for folder, item in list(_test_items(namespace, outboxes)):
+    for folder, item in list(_test_items(namespace, outboxes, mailbox=mailbox)):
         try:
             is_meeting = (
                 getattr(item, "MeetingStatus", 0) == OL_MEETING
@@ -466,7 +486,7 @@ def purge_tests(
 
     # 2. wait for the Outbox to empty of test mail
     def queued() -> int:
-        return sum(1 for _ in _test_items(namespace, outboxes, include_outbox=True))
+        return sum(1 for _ in _test_items(namespace, outboxes, include_outbox=True, mailbox=mailbox))
 
     waited = 0.0
     while queued():
@@ -484,7 +504,7 @@ def purge_tests(
     # 3. delete, never touching the Outbox
     remaining = counts["found"]
     for attempt in range(1, max_passes + 1):
-        for folder, item in list(_test_items(namespace, outboxes)):
+        for folder, item in list(_test_items(namespace, outboxes, mailbox=mailbox)):
             try:
                 if on_progress:
                     on_progress(folder, item)
