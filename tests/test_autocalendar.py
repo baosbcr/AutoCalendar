@@ -484,8 +484,9 @@ class _FakeMeeting:
 
     def Send(self):
         self.sends += 1
-        kind = "Canceled" if self._status == 5 else "Invitation"
+        kind = "Canceled" if self._status == 5 else "Request"
         self._outbox._items.append(_FakeMail(f"{kind}: {self.Subject}", self._outbox))
+        self._status = 1  # like Outlook: the organiser copy never shows the cancel
 
     def Delete(self):
         self.deleted = True
@@ -499,6 +500,7 @@ class _FakeMail:
 
     def __init__(self, subject, folder):
         self.Subject, self.Categories, self._folder = subject, "", folder
+        self.MessageClass = "IPM.Schedule.Meeting." + subject.split(":")[0]
         _FakeMail._n += 1
         self.EntryID = f"x{_FakeMail._n}"
         self.deleted_unsent = False
@@ -523,7 +525,7 @@ class _FakeStore:
         return self._root
 
     def GetDefaultFolder(self, n):
-        return self._outbox
+        return self._outbox if n == 4 else _FakeStore.folders[2]
 
 
 class _FakeNamespace:
@@ -559,7 +561,7 @@ class TestPurge(unittest.TestCase):
         from autocalendar.outlook import purge_tests
 
         ns = _FakeNamespace(n)
-        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0, outbox_timeout=1)
+        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0, outbox_timeout=1, verify_timeout=0)
         return ns, counts
 
     def test_every_attendee_is_told_exactly_once(self):
@@ -575,36 +577,56 @@ class TestPurge(unittest.TestCase):
         self.assertTrue(all(m.deleted for m in ns.meetings))
         self.assertEqual(ns.sent._items, [])  # the sent cancellations are tidied up too
 
-    def test_nothing_is_deleted_while_the_outbox_is_stuck(self):
+    def test_queued_cancellations_survive_a_stuck_outbox(self):
+        """Offline: the organiser copies go (as with Outlook's Send Cancellation),
+        but the queued cancellations stay queued until they can leave."""
         from autocalendar.outlook import purge_tests
 
         ns = _FakeNamespace(3)
         ns.SendAndReceive = lambda _show: None  # offline: nothing ever leaves
-        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0.01, outbox_timeout=0.05)
+        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0.01, outbox_timeout=0.05, verify_timeout=0)
         self.assertEqual(counts["outbox_stuck"], 3)
-        self.assertEqual(counts["deleted"], 0)
+        self.assertEqual(counts["deleted"], 3)  # the three organiser copies only
         self.assertEqual(len(ns.outbox._items), 3)  # still queued, not destroyed
+        self.assertTrue(all(m.Subject.startswith("Canceled") for m in ns.outbox._items))
 
     def test_a_cancel_that_does_not_stick_is_never_sent_or_deleted(self):
         """Never re-send an invitation, never orphan an attendee's copy."""
         from autocalendar.outlook import purge_tests
 
         ns = _FakeNamespace(4, stubborn={2})
-        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0, outbox_timeout=1)
+        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0, outbox_timeout=1, verify_timeout=0)
         stubborn = ns.meetings[2]
         self.assertEqual(stubborn.sends, 0)
         self.assertFalse(stubborn.deleted)
         self.assertEqual(counts["cancel_failed"], 1)
         self.assertEqual(counts["cancelled"], 3)
-        self.assertFalse(any(m.Subject.startswith("Invitation") for m in ns.sent_mail))
+        self.assertFalse(any(m.Subject.startswith("Request") for m in ns.sent_mail))
         self.assertEqual(counts["remaining"], 1)
+
+    def test_it_stops_at_the_first_cancel_that_goes_out_as_an_invitation(self):
+        from autocalendar.outlook import purge_tests
+
+        ns = _FakeNamespace(5)
+        first = ns.meetings[0]
+
+        def bad_send():  # the status looked right, but Outlook sends a request
+            first.sends += 1
+            first._status = 1
+            ns.outbox._items.append(_FakeMail(f"Request: {first.Subject}", ns.outbox))
+
+        first.Send = bad_send
+        counts = purge_tests(apply=True, namespace=ns, pace=0, poll=0, outbox_timeout=1, verify_timeout=0)
+        self.assertEqual(counts["resent"], 1)
+        self.assertEqual(sum(m.sends for m in ns.meetings), 1)  # nobody else was touched
+        self.assertFalse(any(m.deleted for m in ns.meetings))
 
     def test_mailbox_filter_leaves_other_mailboxes_alone(self):
         from autocalendar.outlook import purge_tests
 
         ns = _FakeNamespace(2)
         counts = purge_tests(apply=True, namespace=ns, mailbox="someone-else@example.invalid",
-                             pace=0, poll=0, outbox_timeout=1)
+                             pace=0, poll=0, outbox_timeout=1, verify_timeout=0)
         self.assertEqual(counts["found"], 0)
         self.assertFalse(any(m.deleted for m in ns.meetings))
 

@@ -398,6 +398,65 @@ def _test_items(
                     yield folder, item
 
 
+MSG_CANCELED = "IPM.Schedule.Meeting.Canceled"
+#: Deleted Items and the Sync Issues folders (Conflicts, Local Failures, Server
+#: Failures). An organiser meeting there is already gone from the calendar - or
+#: a conflict copy - so deleting it cannot leave an attendee holding anything.
+_SAFE_TO_DELETE = (3, 19, 20, 21, 22)
+
+
+def _safe_folder_ids(namespace, mailbox: str | None = None) -> set[str]:
+    ids = set()
+    for store in _stores(namespace, mailbox):
+        for kind in _SAFE_TO_DELETE:
+            try:
+                ids.add(str(store.GetDefaultFolder(kind).EntryID))
+            except Exception:
+                continue
+    return ids
+OL_FOLDER_SENT = 5
+
+
+def _outgoing_folders(namespace, mailbox: str | None = None) -> list:
+    """Outbox and Sent Items of each store: where a sent message shows up."""
+    folders = []
+    for store in _stores(namespace, mailbox):
+        for kind in (OL_FOLDER_OUTBOX, OL_FOLDER_SENT):
+            try:
+                folders.append(store.GetDefaultFolder(kind))
+            except Exception:
+                continue
+    return folders
+
+
+def _outgoing_ids(folders, subject: str) -> set[str]:
+    ids = set()
+    for folder in folders:
+        for message in _candidates(folder):
+            try:
+                if subject in str(message.Subject):
+                    ids.add(str(message.EntryID))
+            except Exception:
+                continue
+    return ids
+
+
+def _new_outgoing_kind(folders, subject: str, before: set[str], wait: float) -> str | None:
+    """MessageClass of the message a Send() just produced, or None if none appeared."""
+    deadline = time.monotonic() + wait
+    while True:
+        for folder in folders:
+            for message in _candidates(folder):
+                try:
+                    if subject in str(message.Subject) and str(message.EntryID) not in before:
+                        return str(message.MessageClass)
+                except Exception:
+                    continue
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
 def _is_live_organiser_meeting(item) -> bool:
     try:
         return (
@@ -429,6 +488,7 @@ def purge_tests(
     pace: float = SEND_INTERVAL,
     outbox_timeout: float = 600,
     poll: float = 5,
+    verify_timeout: float = 30,
 ) -> dict[str, int]:
     """Remove every trace of a test run, from every mailbox and every folder.
 
@@ -460,8 +520,10 @@ def purge_tests(
     if namespace is None:
         _, namespace = connect()
     outboxes = _outbox_ids(namespace, mailbox)
-    counts = {"found": 0, "cancelled": 0, "cancel_failed": 0, "deleted": 0, "remaining": 0,
-              "passes": 0, "outbox_stuck": 0}
+    outgoing = _outgoing_folders(namespace, mailbox)
+    safe_folders = _safe_folder_ids(namespace, mailbox)
+    counts = {"found": 0, "cancelled": 0, "cancel_failed": 0, "resent": 0, "deleted": 0,
+              "remaining": 0, "passes": 0, "outbox_stuck": 0}
 
     def count() -> int:
         return sum(1 for _ in _test_items(namespace, outboxes, mailbox=mailbox))
@@ -494,22 +556,37 @@ def purge_tests(
                 on_progress(None, item)
             item.MeetingStatus = OL_MEETING_CANCELED
             item.Save()
-            del item
-            # Read it back. Send() on a meeting that is not really cancelled
-            # re-sends the invitation, which is the one thing a purge must never do.
-            item = namespace.GetItemFromID(entry_id, store_id)
+            # Send() on a meeting that is not really cancelled re-sends the
+            # invitation - the one thing a purge must never do. Check the open
+            # item first (Outlook commits the status only on Send; reopening the
+            # item never shows it, not even afterwards).
             if getattr(item, "MeetingStatus", None) != OL_MEETING_CANCELED:
                 counts["cancel_failed"] += 1
                 continue
+            subject = str(item.Subject)
+            before = _outgoing_ids(outgoing, subject)
             item.Send()
+            # The only reliable proof is the message that went out.
+            kind = _new_outgoing_kind(outgoing, subject, before, wait=verify_timeout)
+            if kind != MSG_CANCELED:
+                counts["resent"] += 1  # an invitation, or nothing we can see: stop
+                break
+            # Remove the organiser copy now, as Outlook's own "Send Cancellation"
+            # does, so a later run cannot cancel it a second time.
+            item.Delete()
+            del item
             cancelled.add(key)
             counts["cancelled"] += 1
-            del item
+            counts["deleted"] += 1
             if pace:
                 time.sleep(pace)
         except Exception:
             counts["cancel_failed"] += 1
             continue
+
+    if counts["resent"]:
+        counts["remaining"] = count()
+        return counts
 
     # 2. wait for the Outbox to empty of test mail
     def queued() -> int:
@@ -535,11 +612,16 @@ def purge_tests(
     for attempt in range(1, max_passes + 1):
         ids = []
         for folder, item in _test_items(namespace, outboxes, mailbox=mailbox):
-            if not _is_live_organiser_meeting(item):
-                try:
+            try:
+                protected = (
+                    _is_live_organiser_meeting(item)
+                    and str(folder.EntryID) not in safe_folders
+                    and _meeting_key(item) not in cancelled
+                )
+                if not protected:
                     ids.append((str(item.EntryID), str(folder.StoreID)))
-                except Exception:
-                    pass
+            except Exception:
+                pass
             del item
         for entry_id, store_id in ids:
             try:

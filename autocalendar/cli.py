@@ -232,6 +232,12 @@ def _outlook_only(args) -> int:
             f"\nCancelled {counts['cancelled']}, deleted {counts['deleted']} "
             f"in {counts['passes']} pass(es), {counts['remaining']} remaining."
         )
+        if counts.get("resent"):
+            print(
+                "STOPPED: a cancellation went out as an invitation instead. Nothing else was "
+                "sent or deleted. Check the attendee's mailbox before running again."
+            )
+            return 1
         if counts.get("cancel_failed"):
             print(
                 f"{counts['cancel_failed']} meeting(s) could not be cancelled and were left in "
