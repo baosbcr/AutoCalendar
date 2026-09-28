@@ -325,6 +325,11 @@ The line that matters is the silent one. **Start, end, location, title and
 attendees notify; everything else is saved quietly.** A tidied description does
 not put mail in 200 inboxes.
 
+**Correction 2026-09-28:** "notifies only the people a change concerns" does not hold for
+added attendees. `Send()` goes to the whole attendee list, so adding one person re-mails
+everyone already invited, and the report's count shows only the added person. See "Agreed
+workflow" below; fixing it is the next piece of work.
+
 An event dropped from the sheet is cancelled properly if people were invited, and
 simply deleted if it was never sent - so an unsent draft bothers nobody.
 
@@ -389,14 +394,64 @@ August 2026 edition.
 
 ---
 
+## Agreed workflow - meeting 2026-09-28
+
+**How it was done until now.** Someone creates a placeholder in Toke's calendar. Toke
+edits it by hand in Outlook, adding the invitees, and that turns it into the final event.
+
+**The workflow agreed with him** (on the condition that it can be built quickly and he
+knows what notifications go out):
+
+1. Create the placeholder in Toke's calendar, with no invitees.
+2. Add the invitees **in the source Excel sheet**. The tool turns the placeholder into the
+   real event. Toke only pushes rows that are ready to ship.
+3. From then on he edits the event **by hand in Outlook**: adds more invitees, rewrites the
+   description (which can hold tables), attaches files.
+
+**What this requires of the tool. Neither is built yet.**
+
+- **Hand-off: Outlook wins after the first manual edit.** Today a re-run compares the
+  Outlook body with the sheet and overwrites it with plain text (`sync.py` `compare` /
+  `_write`), which would wipe Toke's tables and edits. The rule to build: once an event
+  has been edited in Outlook, a re-run may only *add* invitees from the sheet. It never
+  rewrites the title, time, location or body, and never removes anyone.
+- **No notification bombs.** Adding an invitee on a re-run calls `Send()` on the whole
+  meeting, so the update goes to *every* attendee, not just the new ones, and the "would
+  contact N" figure under-reports it. To investigate: how to send only to the added
+  people (Outlook's UI offers "send updates only to added or deleted attendees"; the
+  object model has no direct equivalent), and what each step sends when it runs through
+  delegate access on Toke's behalf. **The placeholder send waits on this answer.**
+
+**Where things run.** Placeholders must be in Toke's own calendar. For now they are
+created through delegate access to it. A shared course-admin mailbox is planned to
+replace per-person delegate access, but it does not exist yet.
+
+**In parallel: a packaged .ics converter.** A double-click `.exe` (PyInstaller) that
+takes the Excel sheet and writes an importable `.ics`. It is far less invasive than
+driving Outlook, and importing sends no invitations (verified 2026-09-07), which makes it
+safe for placeholders. It cannot invite anyone or update events later.
+
+**Data notes from the same meeting.**
+
+- The prefix on event names (`SF, Day 5 ...`, `HK` on Day 7) is **a speaker's initials**.
+  When a new edition is built from the previous one, those initials belong to *last*
+  edition's speakers and must not be carried over as if they were part of the session
+  name.
+- Toke keeps challenge partners as **contact groups** in his Outlook. `Recipients.Add`
+  with a group name should resolve against the address book. Under delegate access,
+  though, it resolves against the running profile's contacts, not his. Deferred.
+
+---
+
 ## Open questions for Toke
 
 1. ~~**Send timing**~~ — **resolved, no longer blocking.** Invitations normally go out well
    in advance for this course, and the tool controls pacing by choosing which rows to send.
 2. **What is a "course edition"** concretely — same structure with shifted dates and
    swapped speakers? Should the tool offer a "shift all dates by N weeks"?
-3. **Should the Categories gate sending?** e.g. only `Complete` rows get invites;
-   `Placeholder` rows become calendar blockers with no attendees.
+3. ~~**Should the Categories gate sending?**~~ - **answered 2026-09-28 in practice:** a
+   placeholder has no invitees, and Toke adds invitees only to rows that are ready to
+   ship. The Attendees column is the gate. See "Agreed workflow" above.
 4. **Which calendar** should events land in, given he keeps at least six? *This is now the
    main open question.*
 5. ~~**The ~169 missing email addresses**~~ — **withdrawn.** See the correction above; the

@@ -4,7 +4,8 @@ Turn the Excel planning sheet for a programme — dates, times, rooms, subject
 names, content — into a single `.ics` calendar file that can be imported
 ("installed") into Outlook, Google Calendar or Apple Calendar.
 
-First mock-up for DTU Entrepreneurship.
+Built for DTU Entrepreneurship. It can also drive classic Outlook to create the
+events and send real invitations, see [Sending real invitations](#sending-real-invitations-windows--classic-outlook).
 
 ```
 examples/programme_autumn2026.xlsx  ->  examples/programme_autumn2026.ics
@@ -155,6 +156,11 @@ Start, end, location, title and attendee changes notify the people involved.
 Everything else is saved quietly, so tidying a description does not mail 200
 students. `--apply` carries the plan out; add `--send` to let it notify anyone.
 
+> **Known limitation (2026-09-28):** when an attendee is *added*, the update currently goes
+> to **every** attendee of that meeting, not only the new one, and the "would contact N"
+> figure counts only the added people. Fixing this is the next piece of work; see
+> [Notes and next steps](#notes-and-next-steps).
+
 To make this work the tool adds an **`AutoCalendar ID`** column to the sheet and
 fills it on the first run. That column is how a later run knows which row is which
 event, so a session can be retitled, moved to another week or dragged elsewhere in
@@ -227,8 +233,11 @@ autocalendar/
   ics.py         RFC 5545 writer - escaping, 75-octet folding, CRLF
   timezones.py   VTIMEZONE blocks for European zones
   model.py       the Event dataclass and its stable UID
+  outlook.py     drives classic Outlook over COM: create, send, test mode, purge
+  sync.py        re-runs: compare sheet vs calendar, plan, apply
+  sheet_ids.py   the AutoCalendar ID column, written back into the sheet
 examples/        the example sheet and the script that generates it
-tests/           27 tests, stdlib unittest
+tests/           63 tests, stdlib unittest
 ```
 
 Run the tests with:
@@ -239,17 +248,24 @@ python -m unittest discover -s tests
 
 ## Notes and next steps
 
-Deliberately out of scope for a first mock-up, in rough order of usefulness:
+Next, agreed with the programme manager on 2026-09-28 (details in
+[docs/delivery-options.md](docs/delivery-options.md#agreed-workflow---meeting-2026-09-28)):
 
-1. **Recurring sessions** — `RRULE` for "every Tuesday for 12 weeks" instead
-   of one row per occurrence.
-2. **A published calendar feed** — host the `.ics` at a URL and subscribe to
-   it, so changes to the sheet reach everyone's calendar without re-importing.
-3. **Invitations** — adding participants as `ATTENDEE`s so the sessions land
-   in students' calendars as invites rather than an import they must do
-   themselves.
-4. **A drag-and-drop page** — for handing to someone without Python.
-5. **Room booking cross-check** — validating locations against DTU's room list.
+1. **Notify only the people who are added.** Adding an invitee on a re-run currently
+   sends the update to every attendee.
+2. **Outlook wins after a manual edit.** Once an event has been edited by hand, a re-run
+   may only add invitees. It must not overwrite the description, attachments or anything
+   else.
+3. **A double-click `.exe`** of the `.ics` converter, so it runs without Python.
+
+Later, in rough order of usefulness:
+
+- **Contact groups** in the Attendees column.
+- **Recurring sessions**: `RRULE` for "every Tuesday for 12 weeks" instead of one row
+  per occurrence.
+- **A published calendar feed**: host the `.ics` at a URL so changes reach everyone
+  without re-importing.
+- **Room booking cross-check**: validate locations against DTU's room list.
 
 ## Licence
 
