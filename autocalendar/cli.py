@@ -392,7 +392,37 @@ def _push_to_outlook(args, path, result) -> int:
     return 1 if tally.get("failed") else 0
 
 
+def _own_console() -> bool:
+    """True when this process opened its console window itself.
+
+    That is what happens when the .exe is double-clicked, or a sheet is
+    dropped on it: the window would vanish the moment the run ends, taking
+    the report with it. Started from a terminal, the console is shared.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        processes = (ctypes.c_uint * 2)()
+        return ctypes.windll.kernel32.GetConsoleProcessList(processes, 2) == 1
+    except (AttributeError, OSError):  # pragma: no cover - no console at all
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
+    if not _own_console():
+        return _main(argv)
+    try:
+        return _main(argv)
+    finally:
+        try:
+            input("\nPress Enter to close this window.")
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+
+def _main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.timezones:
@@ -446,6 +476,8 @@ def main(argv: list[str] | None = None) -> int:
                 else "added to the event description"
             )
             print(f"  Other columns ({where}): {', '.join(result.extra_columns)}")
+        if result.unused_columns:
+            print(f"  Outlook columns not used: {', '.join(result.unused_columns)}")
         print(f"  {len(result.events)} event(s) found")
 
     for problem in result.problems:
@@ -487,9 +519,16 @@ def main(argv: list[str] | None = None) -> int:
         first = min(_as_date(e.start) for e in result.events)
         last = max(_as_date(e.end) for e in result.events)
         print(f"  {first:%d %b %Y} - {last:%d %b %Y}, timezone {args.tz}")
+        invited = sum(1 for e in result.events if e.has_attendees)
+        if invited:
+            print(
+                f"  {invited} event(s) list invitees in the sheet. They stay there for the"
+                "\n  real invitation run, and are left out of this file: importing it"
+                "\n  invites nobody and sends nothing."
+            )
         print(f"\nWrote {output}")
-        print("Import it: Outlook > File > Open & Export > Import, or")
-        print("           Google Calendar > Settings > Import & export.")
+        print("Import it in classic Outlook: File > Open & Export > Import/Export >")
+        print("  Import an iCalendar (.ics) or vCalendar file > Import.")
 
     if args.strict and result.skipped:
         return 1

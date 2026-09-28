@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoCalendar</title>
+<meta name="description" content="Turn an Outlook calendar export or planning sheet into an .ics file you can import into Outlook. Runs in your browser; the file never leaves your computer.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='2.5' width='14' height='12' rx='2' fill='%23990000'/%3E%3Crect x='3' y='6.5' width='10' height='6' rx='1' fill='white'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f7f7f5; --surface: #ffffff; --text: #1d1d1b; --muted: #5f5f5a;
+    --border: #deded8; --accent: #990000; --accent-text: #ffffff;
+    --ok: #1c7a3e; --warn: #9a5b00; --bad: #b3261e; --soft: #f0efea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151514; --surface: #1f1f1d; --text: #ecebe6; --muted: #a7a69f;
+      --border: #383835; --accent: #e0605a; --accent-text: #151514;
+      --ok: #5cc88a; --warn: #e3a64a; --bad: #f08a84; --soft: #262624;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 1.1rem; margin: 28px 0 10px; }
+  p { margin: 0 0 12px; }
+  .lede { color: var(--muted); margin-bottom: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .notice { border-left: 4px solid var(--ok); background: var(--soft); padding: 10px 14px; border-radius: 6px; margin: 16px 0; }
+  #drop {
+    display: block; border: 2px dashed var(--border); border-radius: 12px; padding: 36px 16px;
+    text-align: center; cursor: pointer; background: var(--surface); transition: border-color .15s, background .15s;
+  }
+  #drop:hover, #drop.over { border-color: var(--accent); background: var(--soft); }
+  #drop strong { display: block; font-size: 1.1rem; margin-bottom: 4px; }
+  #drop span { color: var(--muted); font-size: .95rem; }
+  #file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  #status { margin: 14px 0 0; color: var(--muted); min-height: 1.5em; }
+  #status.error { color: var(--bad); font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 16px; }
+  label.field { flex: 1 1 260px; font-size: .9rem; color: var(--muted); }
+  label.field input { display: block; width: 100%; margin-top: 4px; padding: 9px 10px; font: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+  button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; border: 0; cursor: pointer;
+    background: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .summary { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: .95rem; }
+  .summary b { font-size: 1.25rem; }
+  ul.problems { margin: 8px 0 0; padding-left: 20px; }
+  ul.problems li.fatal { color: var(--bad); }
+  ul.problems li.warn { color: var(--warn); }
+  .columns { font-size: .9rem; color: var(--muted); }
+  .columns code { color: var(--text); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; margin-top: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--soft); font-weight: 600; white-space: nowrap; }
+  td.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.where { color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  ol.steps { padding-left: 20px; }
+  ol.steps li { margin-bottom: 6px; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
+  a { color: var(--accent); }
+  footer { margin-top: 40px; font-size: .85rem; color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AutoCalendar</h1>
+  <p class="lede">Turn an Outlook calendar export, or any planning sheet, into one <code>.ics</code> file
+    that Outlook imports in one go.</p>
+
+  <label id="drop" for="file">
+    <strong>Drop your sheet here, or click to choose it</strong>
+    <span>.xlsx or .csv, e.g. an Outlook calendar export edited in Excel</span>
+  </label>
+  <input id="file" type="file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
+  <p id="status">Loading the converter…</p>
+
+  <div class="notice">
+    <strong>Your file never leaves your computer.</strong> The converter runs inside this page.
+    It also never invites anyone: invitees in the sheet are left out of the calendar file.
+  </div>
+
+  <section id="result" hidden>
+    <div class="card">
+      <div class="summary" id="summary"></div>
+      <div class="row">
+        <label class="field">Calendar name
+          <input id="calname" type="text">
+        </label>
+        <button id="download" type="button">Download .ics</button>
+      </div>
+      <ul class="problems" id="problems"></ul>
+      <p class="columns" id="columns"></p>
+    </div>
+
+    <h2>Events in the file</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>When</th><th>Subject</th><th>Location</th></tr></thead>
+      <tbody id="events"></tbody>
+    </table></div>
+  </section>
+
+  <h2>Then import it into Outlook</h2>
+  <ol class="steps">
+    <li>In <strong>classic Outlook</strong>: <em>File &gt; Open &amp; Export &gt; Import/Export</em>.</li>
+    <li>Choose <em>Import an iCalendar (.ics) or vCalendar file</em> and pick the downloaded file.</li>
+    <li>Click <strong>Import</strong> to add the events to your calendar, or <strong>Open as New</strong> to look them
+      over in a separate calendar first.</li>
+  </ol>
+  <p>Use the menu rather than double-clicking the file: on some PCs a double-click opens the new Outlook,
+    which gets stuck at a sign-in screen. How the sheet should look, and what you can edit:
+    <a href="https://github.com/baosbcr/AutoCalendar/blob/main/docs/ics-converter-guide.md">the guide</a>.</p>
+
+  <footer>AutoCalendar, DTU Entrepreneurship ·
+    <a href="https://github.com/baosbcr/AutoCalendar">source</a> · <span id="version"></span></footer>
+</main>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
+<script>
+// The converter is the repository's own Python package, served next to this page
+// (see .github/workflows/pages.yml) and run by Pyodide. Nothing is uploaded.
+const MODULES = ["__init__", "model", "parsing", "reader", "ics", "timezones", "cli"];
+const $ = (id) => document.getElementById(id);
+let current = null;  // {name, ics}
+
+const GLUE = `
+import json, sys
+sys.path.insert(0, "/app")
+from pathlib import Path
+from autocalendar import __version__, read_events, build_calendar
+from autocalendar.cli import FIELD_LABELS
+
+_events = []
+
+def calendar_text(calendar_name):
+    return build_calendar(_events, calendar_name=calendar_name)
+
+def convert(path):
+    global _events
+    result = read_events(path)
+    _events = result.events
+    def when(e):
+        if e.all_day:
+            if e.end != e.start:
+                return f"{e.start:%a %d %b %Y} - {e.end:%a %d %b}, all day"
+            return f"{e.start:%a %d %b %Y}, all day"
+        return f"{e.start:%a %d %b %Y}  {e.start:%H:%M}-{e.end:%H:%M}"
+    return json.dumps({
+        "version": __version__,
+        "sheet": result.sheet,
+        "header_row": result.header_row,
+        "mapping": [[FIELD_LABELS.get(k, k), v] for k, v in result.mapping.items()],
+        "extra": result.extra_columns,
+        "unused": result.unused_columns,
+        "problems": [{"text": str(p), "fatal": p.fatal} for p in result.problems],
+        "invited": sum(1 for e in result.events if e.has_attendees),
+        "events": [{"when": when(e), "title": e.title, "where": e.location} for e in result.events],
+    })
+`;
+
+const ready = (async () => {
+  const py = await loadPyodide();
+  await py.loadPackage("micropip");
+  const base = new URL("autocalendar/", location.href);
+  const [sources] = await Promise.all([
+    Promise.all(MODULES.map(async (m) => {
+      const r = await fetch(new URL(m + ".py", base));
+      if (!r.ok) throw new Error(`could not load ${m}.py (${r.status})`);
+      return [m, await r.text()];
+    })),
+    py.runPythonAsync('import micropip\nawait micropip.install("openpyxl")'),
+  ]);
+  py.FS.mkdirTree("/app/autocalendar");
+  for (const [m, text] of sources) py.FS.writeFile(`/app/autocalendar/${m}.py`, text);
+  py.runPython(GLUE);
+  $("version").textContent = "version " + py.runPython("__version__");
+  return py;
+})();
+
+ready.then(
+  () => setStatus("Ready. Choose a sheet."),
+  (err) => setStatus("The converter could not load: " + err.message + ". Check the internet connection and reload.", true),
+);
+
+function setStatus(text, error = false) {
+  $("status").textContent = text;
+  $("status").className = error ? "error" : "";
+}
+
+async function convertFile(file) {
+  setStatus(`Reading ${file.name}…`);
+  const py = await ready;
+  const path = "/tmp/" + file.name.replace(/[\\/]/g, "_");
+  py.FS.writeFile(path, new Uint8Array(await file.arrayBuffer()));
+  const stem = file.name.replace(/\.[^.]+$/, "");
+  let data;
+  try {
+    data = JSON.parse(py.globals.get("convert")(path));
+  } catch (err) {
+    setStatus("Could not read the file: " + String(err.message || err).split("\n").filter(Boolean).pop(), true);
+    return null;
+  } finally {
+    py.FS.unlink(path);
+  }
+  current = { stem, data };
+  render(data, stem);
+  return data;
+}
+window.convertFile = convertFile;  // handy for testing from the console
+
+function render(d, stem) {
+  const fatal = d.problems.filter((p) => p.fatal).length;
+  $("result").hidden = false;
+  $("calname").value = stem.replace(/_/g, " ").trim();
+  $("download").disabled = !d.events.length;
+
+  $("summary").innerHTML = "";
+  const stat = (n, label) => {
+    const s = document.createElement("span");
+    s.innerHTML = `<b>${n}</b> ${label}`;
+    $("summary").append(s);
+  };
+  stat(d.events.length, d.events.length === 1 ? "event" : "events");
+  stat(fatal, fatal === 1 ? "row skipped" : "rows skipped");
+  if (d.invited) stat(d.invited, "with invitees in the sheet (not imported)");
+
+  const list = $("problems");
+  list.innerHTML = "";
+  for (const p of d.problems) {
+    const li = document.createElement("li");
+    li.className = p.fatal ? "fatal" : "warn";
+    li.textContent = p.text;
+    list.append(li);
+  }
+
+  const cols = d.mapping.map(([label, header]) => `${label} ← <code>${esc(header)}</code>`).join(", ");
+  let text = cols ? `Read sheet “${esc(d.sheet)}”, header on row ${d.header_row}. Columns used: ${cols}.` : "";
+  if (d.extra.length) text += ` Added to the description: ${d.extra.map(esc).join(", ")}.`;
+  if (d.unused.length) text += ` Outlook columns not used: ${d.unused.map(esc).join(", ")}.`;
+  $("columns").innerHTML = text;
+
+  const body = $("events");
+  body.innerHTML = "";
+  for (const e of d.events) {
+    const tr = document.createElement("tr");
+    for (const [cls, value] of [["when", e.when], ["", e.title], ["where", e.where]]) {
+      const td = document.createElement("td");
+      td.className = cls;
+      td.textContent = value;
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+
+  if (!d.events.length) setStatus("No events could be read from this file. See the list above.", true);
+  else setStatus(fatal ? `Converted, but ${fatal} row(s) were skipped. Check the list before importing.`
+                       : "Converted. Download the .ics and import it into Outlook.");
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+$("download").addEventListener("click", async () => {
+  if (!current) return;
+  const py = await ready;
+  const name = $("calname").value.trim() || current.stem;
+  const ics = py.globals.get("calendar_text")(name);
+  const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: current.stem + ".ics" });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+$("file").addEventListener("change", (e) => { if (e.target.files[0]) convertFile(e.target.files[0]); });
+const drop = $("drop");
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) convertFile(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

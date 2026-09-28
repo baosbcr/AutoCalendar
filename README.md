@@ -74,6 +74,26 @@ would rather not use a terminal.
 Start with `--list`: it prints how each column was understood and which rows
 were skipped, without writing anything.
 
+## For a programme manager: the web page
+
+**https://baosbcr.github.io/AutoCalendar/**: drop a sheet on the page and download the
+`.ics`. Nothing to install, nothing for Windows to block, and **the file never leaves the
+browser**. The page runs this repository's own Python package with
+[Pyodide](https://pyodide.org), so it is the same converter as the command line, not a copy.
+The input can be **Outlook's own calendar export** (File > Open & Export > Export to a
+file > CSV), as it is or after editing and saving it in Excel. The step-by-step guide to
+hand over is [docs/ics-converter-guide.md](docs/ics-converter-guide.md).
+
+The page is `web/index.html`. [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
+runs the tests on every push to `main` and publishes the page together with the modules it loads.
+
+**Offline alternative: `AutoCalendar.exe`.** Build it with
+`powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1` (needs
+`pip install pyinstaller`). It leaves out the Outlook automation, because a `.ics` cannot
+send anything anyway. It has never been run as an `.exe`: Smart App Control enforces on
+both of our Windows 11 machines and blocks any unsigned executable. That is why the web
+page is the main route. Signing it (DTU IT, or Microsoft Trusted Signing) would fix it.
+
 ## What the spreadsheet may look like
 
 There is no template to fill in. The converter looks for the column names
@@ -90,11 +110,16 @@ they are in or how far down the sheet the header row sits.
 | Location | Location, Room, Venue, Building, Address, Lokale, Sted, Bygning, Lokation |
 | Content | Content, Description, Notes, Agenda, Indhold, Beskrivelse, Noter |
 | End date | End date, Slutdato (for events spanning several days) |
-| Category | Category, Type, Track, Tag, Kategori |
+| Category | Category, Categories, Type, Track, Tag, Kategori |
 | Link | URL, Link, Teams, Zoom |
-| All day | All day, Heldag |
+| All day | All day, All day event, Heldag |
 
-Anything it does not recognise — `Underviser`, `Responsible`, `Sign-up link` —
+Outlook's export columns are recognised as they are (Start Date, Start Time, Required
+Attendees, ...), its housekeeping columns (Priority, Show time as, Reminder ...) are left
+out quietly, and an all-day event's end is read the way Outlook writes it: midnight on the
+day after.
+
+Anything else it does not recognise — `Underviser`, `Responsible`, `Sign-up link` —
 is not thrown away: it is appended to the event description as
 `Underviser: Toke Reichstein`, so nothing from the sheet is lost.
 
@@ -237,7 +262,9 @@ autocalendar/
   sync.py        re-runs: compare sheet vs calendar, plan, apply
   sheet_ids.py   the AutoCalendar ID column, written back into the sheet
 examples/        the example sheet and the script that generates it
-tests/           63 tests, stdlib unittest
+web/             the browser converter, published to GitHub Pages
+packaging/       builds the offline AutoCalendar.exe
+tests/           68 tests, stdlib unittest
 ```
 
 Run the tests with:
@@ -256,7 +283,8 @@ Next, agreed with the programme manager on 2026-09-28 (details in
 2. **Outlook wins after a manual edit.** Once an event has been edited by hand, a re-run
    may only add invitees. It must not overwrite the description, attachments or anything
    else.
-3. **A double-click `.exe`** of the `.ics` converter, so it runs without Python.
+3. ~~**A double-click `.exe`** of the `.ics` converter~~ - done 2026-09-28 as the web page
+   (see above); the `.exe` is kept as an unsigned offline alternative.
 
 Later, in rough order of usefulness:
 
