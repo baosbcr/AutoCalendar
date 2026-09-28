@@ -289,6 +289,17 @@ class TestReader(unittest.TestCase):
             path.unlink()
         self.assertEqual([e.title for e in result.events], ["Semikolon"])
 
+    def test_a_date_column_beats_a_day_column_before_it(self):
+        # A review sheet with "Day 1" in a Day column and the real date next to it.
+        path = write_csv("Day,Date,Time,Title\nDay 1,Mon 04 Jan 2027,07:30-08:00,Day 1\n")
+        try:
+            result = read_events(path)
+        finally:
+            path.unlink()
+        self.assertEqual(result.mapping["date"], "Date")
+        self.assertEqual(result.events[0].start, dt.datetime(2027, 1, 4, 7, 30))
+        self.assertIn("Day: Day 1", result.events[0].description)
+
     def test_extra_columns_can_be_dropped(self):
         path = write_csv("Date,Subject,Owner\n2026-09-10,Session,Toke\n")
         try:

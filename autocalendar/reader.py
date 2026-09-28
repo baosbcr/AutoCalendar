@@ -271,18 +271,28 @@ def map_columns(
 
     Returns the mapping, the extra columns (kept in the description), and the
     Outlook export columns that are left out on purpose.
+
+    When two columns could fill the same field, the better name wins, whatever
+    the column order: a sheet with both "Day" ("Day 1") and "Date" takes its
+    dates from "Date". ALIASES lists each field's names best first.
     """
-    mapping: dict[str, int] = {}
+    best: dict[str, tuple[int, int]] = {}  # canonical -> (rank, column index)
+    for index, cell in enumerate(header):
+        canonical = _CANONICAL_BY_ALIAS.get(normalise(cell))
+        if canonical and _text(cell):
+            rank = ALIASES[canonical].index(normalise(cell))
+            if canonical not in best or rank < best[canonical][0]:
+                best[canonical] = (rank, index)
+    mapping = {canonical: index for canonical, (_, index) in best.items()}
+
+    claimed = set(mapping.values())
     extras: list[tuple[int, str]] = []
     unused: list[str] = []
     for index, cell in enumerate(header):
         label = _text(cell)
-        if not label:
+        if not label or index in claimed:
             continue
-        canonical = _CANONICAL_BY_ALIAS.get(normalise(cell))
-        if canonical and canonical not in mapping:
-            mapping[canonical] = index
-        elif normalise(cell) in OUTLOOK_UNUSED:
+        if normalise(cell) in OUTLOOK_UNUSED:
             unused.append(label)
         else:
             extras.append((index, label))
