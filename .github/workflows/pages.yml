@@ -33,7 +33,7 @@ jobs:
         run: |
           mkdir -p _site/autocalendar
           cp web/index.html _site/
-          for m in __init__ model parsing reader ics timezones cli; do
+          for m in __init__ model parsing reader ics timezones cli sheet_export; do
             cp "autocalendar/$m.py" _site/autocalendar/
           done
       - uses: actions/upload-pages-artifact@v3

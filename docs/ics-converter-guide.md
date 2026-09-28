@@ -65,7 +65,13 @@ uploaded anywhere.** It shows:
 - **every row it could not read, and why.** Nothing is dropped without being named.
   Fix those rows in Excel and drop the sheet again.
 
-Then click **Download .ics**. You can set the calendar's name first.
+**Last-minute changes on the page.** Untick the events you do not want, and click any
+subject, date, time or location to change it. Clear both times to make an event all-day.
+**Download .ics** then takes only the ticked events, with your changes.
+
+These changes are not saved into your original file. Click **Download edited sheet** to
+keep them: that sheet is the one to keep for the later invitation run, so the sheet and
+your calendar stay the same.
 
 *Offline alternative:* **AutoCalendar.exe** does the same thing. Double-click it and pick
 the sheet, and it writes the `.ics` next to the sheet. Windows may block it, because it is

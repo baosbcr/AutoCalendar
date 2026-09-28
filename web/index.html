@@ -11,12 +11,14 @@
     --bg: #f7f7f5; --surface: #ffffff; --text: #1d1d1b; --muted: #5f5f5a;
     --border: #deded8; --accent: #990000; --accent-text: #ffffff;
     --ok: #1c7a3e; --warn: #9a5b00; --bad: #b3261e; --soft: #f0efea;
+    --edited: #fff4c2; --error-bg: #fde8e6;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #151514; --surface: #1f1f1d; --text: #ecebe6; --muted: #a7a69f;
       --border: #383835; --accent: #e0605a; --accent-text: #151514;
       --ok: #5cc88a; --warn: #e3a64a; --bad: #f08a84; --soft: #262624;
+      --edited: #4a3f12; --error-bg: #4a1f1c;
     }
   }
   * { box-sizing: border-box; }
@@ -24,7 +26,8 @@
     margin: 0; background: var(--bg); color: var(--text);
     font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
-  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 32px 16px 64px; }
+  .narrow { max-width: 860px; }
   h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -0.01em; }
   h2 { font-size: 1.1rem; margin: 28px 0 10px; }
   p { margin: 0 0 12px; }
@@ -45,23 +48,36 @@
   label.field { flex: 1 1 260px; font-size: .9rem; color: var(--muted); }
   label.field input { display: block; width: 100%; margin-top: 4px; padding: 9px 10px; font: inherit; color: var(--text);
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
-  button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; border: 0; cursor: pointer;
+  button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; border: 1px solid var(--accent); cursor: pointer;
     background: var(--accent); color: var(--accent-text); }
+  button.secondary { background: transparent; color: var(--accent); }
   button:disabled { opacity: .5; cursor: default; }
   .summary { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: .95rem; }
   .summary b { font-size: 1.25rem; }
   ul.problems { margin: 8px 0 0; padding-left: 20px; }
   ul.problems li.fatal { color: var(--bad); }
   ul.problems li.warn { color: var(--warn); }
-  .columns { font-size: .9rem; color: var(--muted); }
+  .columns { font-size: .9rem; color: var(--muted); margin-top: 12px; }
   .columns code { color: var(--text); }
-  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; margin-top: 10px; }
-  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
-  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { background: var(--soft); font-weight: 600; white-space: nowrap; }
-  td.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  td.where { color: var(--muted); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: .9rem; color: var(--muted); }
+  .toolbar button { padding: 4px 10px; font-size: .85rem; font-weight: 500; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; margin-top: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 980px; font-size: .88rem; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { background: var(--soft); font-weight: 600; white-space: nowrap; padding: 8px 6px; }
   tr:last-child td { border-bottom: 0; }
+  td.pick { width: 34px; text-align: center; }
+  td input[type="text"], td input[type="date"], td input[type="time"] {
+    width: 100%; font: inherit; color: var(--text); background: transparent;
+    border: 1px solid transparent; border-radius: 5px; padding: 4px 5px;
+  }
+  td input:hover { border-color: var(--border); }
+  td input:focus { border-color: var(--accent); outline: none; background: var(--bg); }
+  td input.edited { background: var(--edited); }
+  tr.off td:not(.pick) { opacity: .4; }
+  tr.bad td { background: var(--error-bg); }
+  col.c-subject { width: 38%; } col.c-date { width: 128px; } col.c-time { width: 92px; } col.c-where { width: 26%; }
+  input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
   ol.steps { padding-left: 20px; }
   ol.steps li { margin-bottom: 6px; }
   code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
@@ -72,20 +88,22 @@
 </head>
 <body>
 <main>
-  <h1>AutoCalendar</h1>
-  <p class="lede">Turn an Outlook calendar export, or any planning sheet, into one <code>.ics</code> file
-    that Outlook imports in one go.</p>
+  <div class="narrow">
+    <h1>AutoCalendar</h1>
+    <p class="lede">Turn an Outlook calendar export, or any planning sheet, into one <code>.ics</code> file
+      that Outlook imports in one go.</p>
 
-  <label id="drop" for="file">
-    <strong>Drop your sheet here, or click to choose it</strong>
-    <span>.xlsx or .csv, e.g. an Outlook calendar export edited in Excel</span>
-  </label>
-  <input id="file" type="file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
-  <p id="status">Loading the converter…</p>
+    <label id="drop" for="file">
+      <strong>Drop your sheet here, or click to choose it</strong>
+      <span>.xlsx or .csv, e.g. an Outlook calendar export edited in Excel</span>
+    </label>
+    <input id="file" type="file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
+    <p id="status">Loading the converter…</p>
 
-  <div class="notice">
-    <strong>Your file never leaves your computer.</strong> The converter runs inside this page.
-    It also never invites anyone: invitees in the sheet are left out of the calendar file.
+    <div class="notice">
+      <strong>Your file never leaves your computer.</strong> The converter runs inside this page.
+      It also never invites anyone: invitees in the sheet are left out of the calendar file.
+    </div>
   </div>
 
   <section id="result" hidden>
@@ -96,63 +114,70 @@
           <input id="calname" type="text">
         </label>
         <button id="download" type="button">Download .ics</button>
+        <button id="download-sheet" type="button" class="secondary">Download edited sheet</button>
       </div>
       <ul class="problems" id="problems"></ul>
       <p class="columns" id="columns"></p>
     </div>
 
-    <h2>Events in the file</h2>
+    <h2>Events</h2>
+    <div class="toolbar">
+      <button type="button" class="secondary" id="all">Select all</button>
+      <button type="button" class="secondary" id="none">Select none</button>
+      <span>Untick what you do not want. Click a cell to edit it; clear both times to make an event
+        all-day. Edits change only the downloads, not your original file: use <em>Download edited
+        sheet</em> to keep them.</span>
+    </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>When</th><th>Subject</th><th>Location</th></tr></thead>
+      <colgroup><col><col class="c-subject"><col class="c-date"><col class="c-time"><col class="c-date"><col class="c-time"><col class="c-where"></colgroup>
+      <thead><tr>
+        <th><input type="checkbox" id="pick-all" aria-label="Select all" checked></th>
+        <th>Subject</th><th>Start date</th><th>Start</th><th>End date</th><th>End</th><th>Location</th>
+      </tr></thead>
       <tbody id="events"></tbody>
     </table></div>
   </section>
 
-  <h2>Then import it into Outlook</h2>
-  <ol class="steps">
-    <li>In <strong>classic Outlook</strong>: <em>File &gt; Open &amp; Export &gt; Import/Export</em>.</li>
-    <li>Choose <em>Import an iCalendar (.ics) or vCalendar file</em> and pick the downloaded file.</li>
-    <li>Click <strong>Import</strong> to add the events to your calendar, or <strong>Open as New</strong> to look them
-      over in a separate calendar first.</li>
-  </ol>
-  <p>Use the menu rather than double-clicking the file: on some PCs a double-click opens the new Outlook,
-    which gets stuck at a sign-in screen. How the sheet should look, and what you can edit:
-    <a href="https://github.com/baosbcr/AutoCalendar/blob/main/docs/ics-converter-guide.md">the guide</a>.</p>
+  <div class="narrow">
+    <h2>Then import it into Outlook</h2>
+    <ol class="steps">
+      <li>In <strong>classic Outlook</strong>: <em>File &gt; Open &amp; Export &gt; Import/Export</em>.</li>
+      <li>Choose <em>Import an iCalendar (.ics) or vCalendar file</em> and pick the downloaded file.</li>
+      <li>Click <strong>Import</strong> to add the events to your calendar, or <strong>Open as New</strong> to look them
+        over in a separate calendar first.</li>
+    </ol>
+    <p>Use the menu rather than double-clicking the file: on some PCs a double-click opens the new Outlook,
+      which gets stuck at a sign-in screen. How the sheet should look, and what you can edit:
+      <a href="https://github.com/baosbcr/AutoCalendar/blob/main/docs/ics-converter-guide.md">the guide</a>.</p>
 
-  <footer>AutoCalendar, DTU Entrepreneurship ·
-    <a href="https://github.com/baosbcr/AutoCalendar">source</a> · <span id="version"></span></footer>
+    <footer>AutoCalendar, DTU Entrepreneurship ·
+      <a href="https://github.com/baosbcr/AutoCalendar">source</a> · <span id="version"></span></footer>
+  </div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
 <script>
 // The converter is the repository's own Python package, served next to this page
 // (see .github/workflows/pages.yml) and run by Pyodide. Nothing is uploaded.
-const MODULES = ["__init__", "model", "parsing", "reader", "ics", "timezones", "cli"];
+const MODULES = ["__init__", "model", "parsing", "reader", "ics", "timezones", "cli", "sheet_export"];
+const FIELDS = ["title", "start_date", "start_time", "end_date", "end_time", "location"];
+const INPUT_TYPE = { title: "text", start_date: "date", start_time: "time", end_date: "date", end_time: "time", location: "text" };
 const $ = (id) => document.getElementById(id);
-let current = null;  // {name, ics}
+let current = null;  // {stem, data, rows: [{fields, original, selected, tr}]}
 
 const GLUE = `
-import json, sys
+import base64, io, json, sys
 sys.path.insert(0, "/app")
-from pathlib import Path
 from autocalendar import __version__, read_events, build_calendar
 from autocalendar.cli import FIELD_LABELS
+from autocalendar.sheet_export import apply_fields, to_fields, write_outlook_sheet
 
 _events = []
-
-def calendar_text(calendar_name):
-    return build_calendar(_events, calendar_name=calendar_name)
 
 def convert(path):
     global _events
     result = read_events(path)
     _events = result.events
-    def when(e):
-        if e.all_day:
-            if e.end != e.start:
-                return f"{e.start:%a %d %b %Y} - {e.end:%a %d %b}, all day"
-            return f"{e.start:%a %d %b %Y}, all day"
-        return f"{e.start:%a %d %b %Y}  {e.start:%H:%M}-{e.end:%H:%M}"
     return json.dumps({
         "version": __version__,
         "sheet": result.sheet,
@@ -162,8 +187,24 @@ def convert(path):
         "unused": result.unused_columns,
         "problems": [{"text": str(p), "fatal": p.fatal} for p in result.problems],
         "invited": sum(1 for e in result.events if e.has_attendees),
-        "events": [{"when": when(e), "title": e.title, "where": e.location} for e in result.events],
+        "events": [to_fields(e) for e in result.events],
     })
+
+def export(payload, kind, calendar_name):
+    """payload: [{"i": index, "fields": {...}}] for the selected rows, in order."""
+    events, errors = [], []
+    for item in json.loads(payload):
+        try:
+            events.append(apply_fields(_events[item["i"]], item["fields"]))
+        except ValueError as exc:
+            errors.append({"i": item["i"], "message": str(exc)})
+    if errors:
+        return json.dumps({"errors": errors})
+    if kind == "ics":
+        return json.dumps({"text": build_calendar(events, calendar_name=calendar_name)})
+    buffer = io.BytesIO()
+    write_outlook_sheet(events, buffer)
+    return json.dumps({"base64": base64.b64encode(buffer.getvalue()).decode()})
 `;
 
 const ready = (async () => {
@@ -210,27 +251,16 @@ async function convertFile(file) {
   } finally {
     py.FS.unlink(path);
   }
-  current = { stem, data };
-  render(data, stem);
+  current = { stem, data, rows: data.events.map((fields) => ({ fields: { ...fields }, original: fields, selected: true })) };
+  render();
   return data;
 }
 window.convertFile = convertFile;  // handy for testing from the console
 
-function render(d, stem) {
-  const fatal = d.problems.filter((p) => p.fatal).length;
+function render() {
+  const d = current.data;
   $("result").hidden = false;
-  $("calname").value = stem.replace(/_/g, " ").trim();
-  $("download").disabled = !d.events.length;
-
-  $("summary").innerHTML = "";
-  const stat = (n, label) => {
-    const s = document.createElement("span");
-    s.innerHTML = `<b>${n}</b> ${label}`;
-    $("summary").append(s);
-  };
-  stat(d.events.length, d.events.length === 1 ? "event" : "events");
-  stat(fatal, fatal === 1 ? "row skipped" : "rows skipped");
-  if (d.invited) stat(d.invited, "with invitees in the sheet (not imported)");
+  $("calname").value = current.stem.replace(/_/g, " ").trim();
 
   const list = $("problems");
   list.innerHTML = "";
@@ -249,39 +279,118 @@ function render(d, stem) {
 
   const body = $("events");
   body.innerHTML = "";
-  for (const e of d.events) {
+  current.rows.forEach((row, i) => {
     const tr = document.createElement("tr");
-    for (const [cls, value] of [["when", e.when], ["", e.title], ["where", e.where]]) {
+    row.tr = tr;
+    const pick = document.createElement("td");
+    pick.className = "pick";
+    const box = Object.assign(document.createElement("input"), { type: "checkbox", checked: true });
+    box.setAttribute("aria-label", "Include " + row.fields.title);
+    box.addEventListener("change", () => { row.selected = box.checked; tr.classList.toggle("off", !box.checked); update(); });
+    row.box = box;
+    pick.append(box);
+    tr.append(pick);
+    for (const name of FIELDS) {
       const td = document.createElement("td");
-      td.className = cls;
-      td.textContent = value;
+      const input = Object.assign(document.createElement("input"), { type: INPUT_TYPE[name], value: row.fields[name] });
+      input.setAttribute("aria-label", name.replace("_", " ") + ", row " + (i + 1));
+      input.addEventListener("input", () => {
+        row.fields[name] = input.value;
+        input.classList.toggle("edited", input.value !== row.original[name]);
+        tr.classList.remove("bad");
+        tr.title = "";
+        update();
+      });
+      td.append(input);
       tr.append(td);
     }
     body.append(tr);
-  }
+  });
+  update();
 
+  const fatal = d.problems.filter((p) => p.fatal).length;
   if (!d.events.length) setStatus("No events could be read from this file. See the list above.", true);
-  else setStatus(fatal ? `Converted, but ${fatal} row(s) were skipped. Check the list before importing.`
-                       : "Converted. Download the .ics and import it into Outlook.");
+  else setStatus(fatal ? `Read, but ${fatal} row(s) were skipped. Check the list before importing.`
+                       : "Read. Untick or edit events below if needed, then download the .ics.");
+}
+
+function update() {
+  const rows = current.rows;
+  const chosen = rows.filter((r) => r.selected).length;
+  const edited = rows.filter((r) => FIELDS.some((f) => r.fields[f] !== r.original[f])).length;
+  const fatal = current.data.problems.filter((p) => p.fatal).length;
+  $("summary").innerHTML = "";
+  const stat = (n, label) => {
+    const s = document.createElement("span");
+    s.innerHTML = `<b>${n}</b> ${label}`;
+    $("summary").append(s);
+  };
+  stat(`${chosen} / ${rows.length}`, "events selected");
+  if (edited) stat(edited, "edited");
+  stat(fatal, fatal === 1 ? "row skipped" : "rows skipped");
+  if (current.data.invited) stat(current.data.invited, "with invitees in the sheet (not imported)");
+  $("download").textContent = `Download .ics (${chosen})`;
+  $("download").disabled = $("download-sheet").disabled = chosen === 0;
+  $("pick-all").checked = chosen === rows.length;
+  $("pick-all").indeterminate = chosen > 0 && chosen < rows.length;
+}
+
+function setAll(on) {
+  for (const row of current.rows) {
+    row.selected = on;
+    row.box.checked = on;
+    row.tr.classList.toggle("off", !on);
+  }
+  update();
+}
+
+async function exportSelected(kind) {
+  const py = await ready;
+  const payload = [];
+  current.rows.forEach((row, i) => { if (row.selected) payload.push({ i, fields: row.fields }); });
+  const name = $("calname").value.trim() || current.stem;
+  const out = JSON.parse(py.globals.get("export")(JSON.stringify(payload), kind, name));
+  for (const row of current.rows) { row.tr.classList.remove("bad"); row.tr.title = ""; }
+  if (out.errors) {
+    for (const { i, message } of out.errors) {
+      current.rows[i].tr.classList.add("bad");
+      current.rows[i].tr.title = message;
+    }
+    const first = out.errors[0];
+    current.rows[first.i].tr.scrollIntoView({ block: "center" });
+    setStatus(`${out.errors.length} event(s) need fixing first (marked red). “${current.rows[first.i].fields.title}”: ${first.message}.`, true);
+    return null;
+  }
+  if (kind === "ics") {
+    save(new Blob([out.text], { type: "text/calendar" }), current.stem + ".ics");
+    setStatus(`Downloaded ${payload.length} event(s) as ${current.stem}.ics. Import it into Outlook (below).`);
+  } else {
+    const bytes = Uint8Array.from(atob(out.base64), (c) => c.charCodeAt(0));
+    save(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+         current.stem + " (edited).xlsx");
+    setStatus(`Downloaded the ${payload.length} selected event(s) as a sheet. It is the one to keep for the invitation run.`);
+  }
+  return out;
+}
+
+function save(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
-$("download").addEventListener("click", async () => {
-  if (!current) return;
-  const py = await ready;
-  const name = $("calname").value.trim() || current.stem;
-  const ics = py.globals.get("calendar_text")(name);
-  const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
-  const a = Object.assign(document.createElement("a"), { href: url, download: current.stem + ".ics" });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-});
-
+$("download").addEventListener("click", () => exportSelected("ics"));
+$("download-sheet").addEventListener("click", () => exportSelected("xlsx"));
+$("all").addEventListener("click", () => setAll(true));
+$("none").addEventListener("click", () => setAll(false));
+$("pick-all").addEventListener("change", (e) => setAll(e.target.checked));
 $("file").addEventListener("change", (e) => { if (e.target.files[0]) convertFile(e.target.files[0]); });
 const drop = $("drop");
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });

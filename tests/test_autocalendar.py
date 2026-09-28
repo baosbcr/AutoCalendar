@@ -857,5 +857,67 @@ class TestOutlookExport(unittest.TestCase):
         self.assertIn("METHOD:PUBLISH", text)
 
 
+class TestEditAndExport(unittest.TestCase):
+    """What the web page does between reading the sheet and writing the .ics."""
+
+    def setUp(self):
+        from autocalendar.sheet_export import apply_fields, to_fields, write_outlook_sheet
+
+        self.apply, self.fields, self.write = apply_fields, to_fields, write_outlook_sheet
+        self.timed = Event(
+            title="CR, Kick-off", start=dt.datetime(2027, 1, 4, 10), end=dt.datetime(2027, 1, 4, 12),
+            location="Aud. 42", description="Line one\nLine two", categories=["Placeholder"],
+            required=["thow@dtu.dk"],
+        )
+        self.span = Event(title="Live Stream", start=dt.date(2027, 1, 4), end=dt.date(2027, 1, 22))
+
+    def test_unedited_fields_give_back_the_same_event(self):
+        for event in (self.timed, self.span):
+            self.assertEqual(self.apply(event, self.fields(event)), event)
+
+    def test_edits_change_only_what_was_edited(self):
+        fields = self.fields(self.timed) | {"title": "Kick-off", "start_time": "09:30"}
+        edited = self.apply(self.timed, fields)
+        self.assertEqual(edited.title, "Kick-off")
+        self.assertEqual(edited.start, dt.datetime(2027, 1, 4, 9, 30))
+        self.assertEqual(edited.required, ["thow@dtu.dk"])  # invitees carried along
+        self.assertEqual(edited.description, "Line one\nLine two")
+
+    def test_clearing_both_times_makes_it_all_day(self):
+        fields = self.fields(self.timed) | {"start_time": "", "end_time": ""}
+        edited = self.apply(self.timed, fields)
+        self.assertTrue(edited.all_day)
+        self.assertEqual((edited.start, edited.end), (dt.date(2027, 1, 4), dt.date(2027, 1, 4)))
+
+    def test_bad_edits_are_refused_with_a_reason(self):
+        for change, reason in (
+            ({"title": " "}, "subject"),
+            ({"end_time": "09:00"}, "not after"),
+            ({"end_time": ""}, "both"),
+            ({"start_date": "soon"}, "date"),
+        ):
+            with self.assertRaisesRegex(ValueError, reason):
+                self.apply(self.timed, self.fields(self.timed) | change)
+
+    def test_exported_sheet_reads_back_the_same(self):
+        handle = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        handle.close()
+        path = Path(handle.name)
+        try:
+            self.write([self.timed, self.span], path)
+            result = read_events(path)
+        finally:
+            path.unlink()
+        self.assertEqual(result.skipped, [])
+        back = {e.title: e for e in result.events}
+        for original in (self.timed, self.span):
+            copy = back[original.title]
+            self.assertEqual((copy.start, copy.end), (original.start, original.end))
+            self.assertEqual(copy.location, original.location)
+            self.assertEqual(copy.description, original.description)
+            self.assertEqual(copy.categories, original.categories)
+            self.assertEqual(copy.required, original.required)
+
+
 if __name__ == "__main__":
     unittest.main()

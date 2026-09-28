@@ -77,7 +77,8 @@ were skipped, without writing anything.
 ## For a programme manager: the web page
 
 **https://baosbcr.github.io/AutoCalendar/**: drop a sheet on the page and download the
-`.ics`. Nothing to install, nothing for Windows to block, and **the file never leaves the
+`.ics`. Events can be unticked and edited on the page first, and the edited set downloaded
+as a sheet again (Outlook's layout), so the sheet stays the source. Nothing to install, nothing for Windows to block, and **the file never leaves the
 browser**. The page runs this repository's own Python package with
 [Pyodide](https://pyodide.org), so it is the same converter as the command line, not a copy.
 The input can be **Outlook's own calendar export** (File > Open & Export > Export to a
@@ -261,10 +262,11 @@ autocalendar/
   outlook.py     drives classic Outlook over COM: create, send, test mode, purge
   sync.py        re-runs: compare sheet vs calendar, plan, apply
   sheet_ids.py   the AutoCalendar ID column, written back into the sheet
+  sheet_export.py  field edits from the web page; writes events back as an Outlook-layout sheet
 examples/        the example sheet and the script that generates it
 web/             the browser converter, published to GitHub Pages
 packaging/       builds the offline AutoCalendar.exe
-tests/           68 tests, stdlib unittest
+tests/           74 tests, stdlib unittest
 ```
 
 Run the tests with:
