@@ -422,9 +422,19 @@ knows what notifications go out):
   object model has no direct equivalent), and what each step sends when it runs through
   delegate access on Toke's behalf. **The placeholder send waits on this answer.**
 
-**Where things run.** Placeholders must be in Toke's own calendar. For now they are
-created through delegate access to it. A shared course-admin mailbox is planned to
-replace per-person delegate access, but it does not exist yet.
+**Who owns the events.** Toke wants to be the **organizer (owner) of the events**. He is
+not an invitee on meetings sent from a student assistant's account, which is the model
+the earlier demo and all verification so far used. So the tool must create and send the
+events **in Toke's calendar, through delegate access**. Outlook then shows him as the
+organizer, with the student assistant as "sent on behalf of". This has not been tested
+yet.
+
+A shared course-admin mailbox is planned. It will eventually take over as organizer and
+replace per-person delegate access, but it does not exist yet. **Caveat to raise:**
+Outlook cannot transfer an existing meeting to a new organizer. Events created with Toke
+as organizer stay his. The course-admin mailbox can only own events it creates itself,
+unless the old ones are cancelled and re-sent from it. Plan the switch-over at an edition
+boundary.
 
 **In parallel: a packaged .ics converter.** A double-click `.exe` (PyInstaller) that
 takes the Excel sheet and writes an importable `.ics`. It is far less invasive than
