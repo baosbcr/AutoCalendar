@@ -29,8 +29,9 @@ MONTHS = {
 # "9-12", "09:00 - 12:00", "9.00–12.00" (note the en dash), "9 til 12"
 _RANGE_SEP = re.compile(r"\s*(?:-|–|—|to|til|until|indtil)\s*", re.IGNORECASE)
 
+# Seconds are accepted and dropped: Outlook's CSV export writes "11:00:00".
 _TIME_RE = re.compile(
-    r"^(?P<h>\d{1,2})\s*(?:[:.]\s*(?P<m>\d{2}))?\s*(?P<ampm>am|pm)?$",
+    r"^(?P<h>\d{1,2})\s*(?:[:.]\s*(?P<m>\d{2})(?::\d{2})?)?\s*(?P<ampm>am|pm)?$",
     re.IGNORECASE,
 )
 

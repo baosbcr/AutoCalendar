@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import io
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,10 +39,11 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "start": (
         "start", "starttime", "from", "time", "timeslot", "begin", "starts",
         "kl", "klokken", "starttid", "tid", "tidspunkt", "fra", "fratid",
+        "starttidspunkt",
     ),
     "end": (
         "end", "endtime", "to", "until", "finish", "ends",
-        "sluttid", "til", "tiltid",
+        "sluttid", "til", "tiltid", "sluttidspunkt",
     ),
     "duration": (
         "duration", "length", "minutes", "mins", "varighed", "laengde",
@@ -57,8 +59,14 @@ ALIASES: dict[str, tuple[str, ...]] = {
         "detaljer", "kommentar", "kommentarer", "program",
     ),
     "url": ("url", "link", "links", "meetinglink", "teams", "zoom", "web"),
-    "all_day": ("allday", "fullday", "heldag", "heledagen"),
-    "category": ("category", "type", "track", "tag", "tags", "label", "kategori"),
+    "all_day": (
+        "allday", "alldayevent", "fullday", "heldag", "heledagen",
+        "heldagsbegivenhed", "heldagsaftale",
+    ),
+    "category": (
+        "category", "categories", "type", "track", "tag", "tags", "label",
+        "kategori", "kategorier",
+    ),
     # Deliberately narrow. A column called "Speaker" or "Underviser" holds a
     # name, not a mailing list - treating it as one would invite people
     # nobody meant to invite. Only headers that unambiguously mean "these
@@ -66,10 +74,11 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "required": (
         "required", "attendees", "attendee", "requiredattendees",
         "participants", "invitees", "deltagere", "inviterede",
+        "obligatoriskedeltagere",
     ),
     "optional": (
         "optional", "optionalattendees", "cc", "copy", "observers",
-        "valgfri", "valgfrie", "kopi",
+        "valgfri", "valgfrie", "kopi", "valgfriedeltagere",
     ),
     "calendar": ("calendar", "targetcalendar", "kalender", "calendarname"),
     # Never a bare "id" - the sheet may already have one meaning something else,
@@ -80,6 +89,15 @@ ALIASES: dict[str, tuple[str, ...]] = {
 _CANONICAL_BY_ALIAS = {
     alias: canonical for canonical, names in ALIASES.items() for alias in names
 }
+
+# Columns of Outlook's own CSV export that a calendar file has no use for.
+# Recognised so they are left out quietly, instead of being appended to every
+# description as "Priority: Normal", "Show time as: 2" and so on.
+OUTLOOK_UNUSED = frozenset({
+    "reminderonoff", "reminderdate", "remindertime", "meetingorganizer",
+    "meetingresources", "billinginformation", "mileage", "priority",
+    "private", "sensitivity", "showtimeas",
+})
 
 DEFAULT_DURATION = dt.timedelta(hours=1)
 
@@ -103,6 +121,7 @@ class ReadResult:
     problems: list[RowProblem] = field(default_factory=list)
     mapping: dict[str, str] = field(default_factory=dict)  # canonical -> header
     extra_columns: list[str] = field(default_factory=list)
+    unused_columns: list[str] = field(default_factory=list)  # Outlook housekeeping
     header_row: int = 1
     sheet: str = ""
 
@@ -174,14 +193,21 @@ def _load_csv(path: Path) -> tuple[list[list], str]:
     else:  # pragma: no cover - latin-1 decodes anything
         raise RuntimeError(f"could not decode {path}")
 
-    sample = text[:4096]
-    try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
-    except csv.Error:
-        dialect = csv.excel()
-        dialect.delimiter = ";" if sample.count(";") > sample.count(",") else ","
-    rows = [list(row) for row in csv.reader(text.splitlines(), dialect)]
-    return rows, path.stem
+    # Parse the whole text, never line by line: a quoted cell may span several
+    # lines (Outlook's export puts entire briefing emails in Description).
+    # Excel saves CSV with "," or ";" depending on the regional settings, so
+    # try each and keep the one whose header row looks most like a header.
+    # Sniffing a sample is not enough: long descriptions full of commas and
+    # semicolons fool it.
+    best: list[list] = []
+    best_score = (-1, -1)
+    for delimiter in (",", ";", "\t"):
+        rows = [list(row) for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
+        index, score = _best_header(rows)
+        width = len(rows[index]) if rows else 0
+        if (score, width) > best_score:
+            best, best_score = rows, (score, width)
+    return best, path.stem
 
 
 def split_people(text: str) -> list[str]:
@@ -216,12 +242,8 @@ def load_rows(path: Path, sheet: str | int | None = None) -> tuple[list[list], s
 # Finding the header row and mapping the columns
 # --------------------------------------------------------------------------
 
-def find_header_row(rows: Sequence[Sequence], look_ahead: int = 15) -> int:
-    """Index of the most header-like row within the first ``look_ahead`` rows.
-
-    Planning sheets often open with a title and a blank line, so the headers
-    are rarely on row 1.
-    """
+def _best_header(rows: Sequence[Sequence], look_ahead: int = 15) -> tuple[int, int]:
+    """(index, score) of the most header-like row within the first rows."""
     best_index, best_score = 0, 0
     for index, row in enumerate(rows[:look_ahead]):
         canon = {_CANONICAL_BY_ALIAS.get(normalise(cell)) for cell in row}
@@ -230,13 +252,29 @@ def find_header_row(rows: Sequence[Sequence], look_ahead: int = 15) -> int:
             score += 2
         if score > best_score:
             best_index, best_score = index, score
-    return best_index
+    return best_index, best_score
 
 
-def map_columns(header: Sequence) -> tuple[dict[str, int], list[tuple[int, str]]]:
-    """Map canonical field -> column index, plus the columns we did not claim."""
+def find_header_row(rows: Sequence[Sequence], look_ahead: int = 15) -> int:
+    """Index of the most header-like row within the first ``look_ahead`` rows.
+
+    Planning sheets often open with a title and a blank line, so the headers
+    are rarely on row 1.
+    """
+    return _best_header(rows, look_ahead)[0]
+
+
+def map_columns(
+    header: Sequence,
+) -> tuple[dict[str, int], list[tuple[int, str]], list[str]]:
+    """Map canonical field -> column index, plus the columns we did not claim.
+
+    Returns the mapping, the extra columns (kept in the description), and the
+    Outlook export columns that are left out on purpose.
+    """
     mapping: dict[str, int] = {}
     extras: list[tuple[int, str]] = []
+    unused: list[str] = []
     for index, cell in enumerate(header):
         label = _text(cell)
         if not label:
@@ -244,14 +282,25 @@ def map_columns(header: Sequence) -> tuple[dict[str, int], list[tuple[int, str]]
         canonical = _CANONICAL_BY_ALIAS.get(normalise(cell))
         if canonical and canonical not in mapping:
             mapping[canonical] = index
+        elif normalise(cell) in OUTLOOK_UNUSED:
+            unused.append(label)
         else:
             extras.append((index, label))
-    return mapping, extras
+    return mapping, extras, unused
 
 
 # --------------------------------------------------------------------------
 # Rows -> events
 # --------------------------------------------------------------------------
+
+def _is_midnight(value) -> bool:
+    if _is_blank(value):
+        return False
+    try:
+        return parse_time(value) == dt.time(0, 0)
+    except ValueError:
+        return False
+
 
 def _row_to_event(
     row: Sequence,
@@ -298,6 +347,12 @@ def _row_to_event(
     if all_day_flag or (not start_text and _is_blank(end_raw)):
         event_start: dt.date = day
         event_end: dt.date = end_day
+        # Outlook's export writes an all-day event as ending at midnight on
+        # the day AFTER its last day (27-08 00:00 -> 28-08 00:00 is one day).
+        # A midnight end time marks that exclusive form; a bare end date is
+        # a sheet's own inclusive last day.
+        if end_day > day and _is_midnight(end_raw):
+            event_end = end_day - dt.timedelta(days=1)
     else:
         if start_text:
             try:
@@ -389,7 +444,7 @@ def read_events(
 
     header_index = find_header_row(rows)
     result.header_row = header_index + 1
-    columns, extras = map_columns(rows[header_index])
+    columns, extras, result.unused_columns = map_columns(rows[header_index])
     result.mapping = {
         canonical: _text(rows[header_index][index])
         for canonical, index in columns.items()

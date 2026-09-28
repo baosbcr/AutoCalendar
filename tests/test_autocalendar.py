@@ -770,5 +770,81 @@ class TestPlanTotals(unittest.TestCase):
         self.assertEqual(plan.people_contacted, 1)
 
 
+OUTLOOK_HEADER = (
+    "Subject,Start Date,Start Time,End Date,End Time,All day event,Reminder on/off,"
+    "Reminder Date,Reminder Time,Meeting Organizer,Required Attendees,Optional Attendees,"
+    "Meeting Resources,Billing Information,Categories,Description,Location,Mileage,"
+    "Priority,Private,Sensitivity,Show time as\n"
+)
+
+
+class TestOutlookExport(unittest.TestCase):
+    """The file a PM gets from Outlook > Export > CSV must convert as it is."""
+
+    def read(self, body: str):
+        path = write_csv(OUTLOOK_HEADER + body)
+        try:
+            return read_events(path)
+        finally:
+            path.unlink()
+
+    def test_times_with_seconds_and_a_multi_line_description(self):
+        result = self.read(
+            'Kick-off,07-08-2026,11:00:00,07-08-2026,12:00:00,False,False,07-08-2026,'
+            '10:45:00,Toke Malm,Sarah F;Tom H,Peter M,,,Complete;Placeholder,'
+            '"Agenda\nThomas D. Miller\n10:00, Aud. 42",Byg 303A,,Normal,False,Normal,2\n'
+        )
+        self.assertEqual(result.skipped, [])
+        [event] = result.events
+        self.assertEqual(event.start, dt.datetime(2026, 8, 7, 11, 0))
+        self.assertEqual(event.end, dt.datetime(2026, 8, 7, 12, 0))
+        # the lines of the description stay in one event, not spilled into rows
+        self.assertEqual(event.description, "Agenda\nThomas D. Miller\n10:00, Aud. 42")
+        self.assertEqual(event.categories, ["Complete", "Placeholder"])
+        self.assertEqual(event.required, ["Sarah F", "Tom H"])
+
+    def test_housekeeping_columns_stay_out_of_the_description(self):
+        result = self.read(
+            "Kick-off,07-08-2026,11:00:00,07-08-2026,12:00:00,False,False,07-08-2026,"
+            "10:45:00,Toke Malm,,,,,,Agenda,Byg 303A,,Normal,False,Normal,2\n"
+        )
+        self.assertEqual(result.events[0].description, "Agenda")
+        self.assertEqual(result.extra_columns, [])
+        self.assertIn("Show time as", result.unused_columns)
+
+    def test_all_day_end_is_exclusive_in_the_export(self):
+        result = self.read(
+            "Live Stream,03-08-2026,00:00:00,22-08-2026,00:00:00,True,False,,,,,,,,,,,,,,,\n"
+            "Check in,11-08-2026,00:00:00,12-08-2026,00:00:00,True,False,,,,,,,,,,,,,,,\n"
+        )
+        stream, check_in = result.events
+        self.assertEqual((stream.start, stream.end), (dt.date(2026, 8, 3), dt.date(2026, 8, 21)))
+        self.assertEqual((check_in.start, check_in.end), (dt.date(2026, 8, 11), dt.date(2026, 8, 11)))
+
+    def test_resaved_by_danish_excel_with_semicolons(self):
+        path = write_csv(
+            "Subject;Start Date;Start Time;End Date;End Time;Description\n"
+            '"Day 1";04-01-2027;07:30;04-01-2027;08:00;"Line one; still one\nLine two"\n'
+        )
+        try:
+            result = read_events(path)
+        finally:
+            path.unlink()
+        [event] = result.events
+        self.assertEqual(event.start, dt.datetime(2027, 1, 4, 7, 30))
+        self.assertEqual(event.description, "Line one; still one\nLine two")
+
+    def test_invitees_never_reach_the_calendar_file(self):
+        result = self.read(
+            "Kick-off,07-08-2026,11:00:00,07-08-2026,12:00:00,False,,,,Toke Malm,"
+            "thow@dtu.dk,x@dtu.dk,,,,,,,,,,\n"
+        )
+        text = build_calendar(result.events)
+        self.assertNotIn("ATTENDEE", text)
+        self.assertNotIn("ORGANIZER", text)
+        self.assertNotIn("thow@dtu.dk", text)
+        self.assertIn("METHOD:PUBLISH", text)
+
+
 if __name__ == "__main__":
     unittest.main()
