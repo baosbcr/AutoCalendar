@@ -429,8 +429,9 @@ events **in Toke's calendar, through delegate access**. Outlook then shows him a
 organizer, with the student assistant as "sent on behalf of". This has not been tested
 yet.
 
-A shared course-admin mailbox is planned. It will eventually take over as organizer and
-replace per-person delegate access, but it does not exist yet. **Caveat to raise:**
+A shared course-admin mailbox exists (2026-10-05), set up under Toke's account; whether it
+can act as an account of its own is not yet known. It is meant to take over as organizer and
+replace per-person delegate access. **Caveat to raise:**
 Outlook cannot transfer an existing meeting to a new organizer. Events created with Toke
 as organizer stay his. The course-admin mailbox can only own events it creates itself,
 unless the old ones are cancelled and re-sent from it. Plan the switch-over at an edition
