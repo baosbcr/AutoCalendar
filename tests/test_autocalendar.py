@@ -300,6 +300,24 @@ class TestReader(unittest.TestCase):
         self.assertEqual(result.events[0].start, dt.datetime(2027, 1, 4, 7, 30))
         self.assertIn("Day: Day 1", result.events[0].description)
 
+    def test_master_sheet_columns(self):
+        # Toke's master: a note in the subject header, a Tags column for the
+        # filter and a Status column for his own bookkeeping.
+        path = write_csv(
+            "Status,Tags,Subject (link to Drag n' Drop file),Start Date,Start Time,End Time,Categories\n"
+            "Added,CP,\"CP, Day 1\",2027-01-04,12:15,15:30,Placeholder\n"
+        )
+        try:
+            result = read_events(path)
+        finally:
+            path.unlink()
+        event = result.events[0]
+        self.assertEqual(event.title, "CP, Day 1")
+        self.assertEqual(event.tag, "CP")
+        self.assertEqual(event.categories, ["Placeholder"])
+        self.assertEqual(event.description, "")
+        self.assertIn("Status", result.unused_columns)
+
     def test_extra_columns_can_be_dropped(self):
         path = write_csv("Date,Subject,Owner\n2026-09-10,Session,Toke\n")
         try:

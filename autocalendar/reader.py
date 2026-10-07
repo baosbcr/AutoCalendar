@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,9 +65,12 @@ ALIASES: dict[str, tuple[str, ...]] = {
         "heldagsbegivenhed", "heldagsaftale",
     ),
     "category": (
-        "category", "categories", "type", "track", "tag", "tags", "label",
+        "category", "categories", "type", "track", "label",
         "kategori", "kategorier",
     ),
+    # Who a placeholder is for ("CP", "TA", "Speaker"): for filtering on the
+    # page, not for the invitation, so it stays out of the description.
+    "tag": ("tags", "tag"),
     # Deliberately narrow. A column called "Speaker" or "Underviser" holds a
     # name, not a mailing list - treating it as one would invite people
     # nobody meant to invite. Only headers that unambiguously mean "these
@@ -97,6 +101,8 @@ OUTLOOK_UNUSED = frozenset({
     "reminderonoff", "reminderdate", "remindertime", "meetingorganizer",
     "meetingresources", "billinginformation", "mileage", "priority",
     "private", "sensitivity", "showtimeas",
+    # The master sheet's own bookkeeping: whether an event is in the calendar yet.
+    "status",
 })
 
 DEFAULT_DURATION = dt.timedelta(hours=1)
@@ -136,6 +142,18 @@ class ReadResult:
 
 def normalise(header) -> str:
     return "".join(ch for ch in str(header or "").lower() if ch.isalnum())
+
+
+def _lookup(header) -> tuple[str | None, str]:
+    """The canonical field a header means, and the alias it matched.
+
+    A note in brackets does not change what a column is:
+    "Subject (link to Drag n' Drop file)" is the subject.
+    """
+    for name in (normalise(header), normalise(re.sub(r"\(.*?\)", "", str(header or "")))):
+        if name in _CANONICAL_BY_ALIAS:
+            return _CANONICAL_BY_ALIAS[name], name
+    return None, ""
 
 
 def _is_blank(value) -> bool:
@@ -246,7 +264,7 @@ def _best_header(rows: Sequence[Sequence], look_ahead: int = 15) -> tuple[int, i
     """(index, score) of the most header-like row within the first rows."""
     best_index, best_score = 0, 0
     for index, row in enumerate(rows[:look_ahead]):
-        canon = {_CANONICAL_BY_ALIAS.get(normalise(cell)) for cell in row}
+        canon = {_lookup(cell)[0] for cell in row}
         score = len(canon - {None})
         if {"title", "date"} <= canon:  # a believable header has both
             score += 2
@@ -278,9 +296,9 @@ def map_columns(
     """
     best: dict[str, tuple[int, int]] = {}  # canonical -> (rank, column index)
     for index, cell in enumerate(header):
-        canonical = _CANONICAL_BY_ALIAS.get(normalise(cell))
+        canonical, alias = _lookup(cell)
         if canonical and _text(cell):
-            rank = ALIASES[canonical].index(normalise(cell))
+            rank = ALIASES[canonical].index(alias)
             if canonical not in best or rank < best[canonical][0]:
                 best[canonical] = (rank, index)
     mapping = {canonical: index for canonical, (_, index) in best.items()}
@@ -432,6 +450,7 @@ def _row_to_event(
         required=split_people(_text(cell("required"))),
         optional=split_people(_text(cell("optional"))),
         calendar=_text(cell("calendar")),
+        tag=_text(cell("tag")),
         event_id=_text(cell("event_id")),
         source_row=row_number,
     )

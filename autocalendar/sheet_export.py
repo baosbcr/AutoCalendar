@@ -26,7 +26,7 @@ OUTLOOK_COLUMNS = [
     "Required Attendees", "Optional Attendees", "Categories", "Location", "Description",
 ]
 # Written only when some event uses them.
-OPTIONAL_COLUMNS = [("Link", "url"), ("Calendar", "calendar"), ("AutoCalendar ID", "event_id")]
+OPTIONAL_COLUMNS = [("Link", "url"), ("Calendar", "calendar"), ("Tags", "tag"), ("AutoCalendar ID", "event_id")]
 
 
 def to_fields(event: Event) -> dict[str, str]:
@@ -38,6 +38,7 @@ def to_fields(event: Event) -> dict[str, str]:
             "end_date": event.end.isoformat(),
             "end_time": "",
             "location": event.location,
+            "tag": event.tag,
         }
     return {
         "title": event.title,
@@ -46,6 +47,7 @@ def to_fields(event: Event) -> dict[str, str]:
         "end_date": event.end.date().isoformat(),
         "end_time": f"{event.end:%H:%M}",
         "location": event.location,
+        "tag": event.tag,
     }
 
 

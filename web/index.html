@@ -71,13 +71,22 @@
     width: 100%; font: inherit; color: var(--text); background: transparent;
     border: 1px solid transparent; border-radius: 5px; padding: 4px 5px;
   }
-  td input:hover { border-color: var(--border); }
-  td input:focus { border-color: var(--accent); outline: none; background: var(--bg); }
+  td input:not([readonly]):hover { border-color: var(--border); }
+  td input[readonly] { cursor: default; }
+  td input:not([readonly]):focus { border-color: var(--accent); outline: none; background: var(--bg); }
   td input.edited { background: var(--edited); }
   tr.off td:not(.pick) { opacity: .4; }
   tr.bad td { background: var(--error-bg); }
-  col.c-subject { width: 38%; } col.c-date { width: 128px; } col.c-time { width: 92px; } col.c-where { width: 26%; }
+  th .filter { display: block; width: 100%; margin-top: 4px; font: inherit; font-weight: 400; font-size: .85rem;
+    color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; }
+  td.tag { white-space: nowrap; color: var(--muted); padding-left: 8px; }
+  col.c-tag { width: 92px; }
+  col.c-subject { width: 36%; } col.c-date { width: 128px; } col.c-time { width: 92px; } col.c-where { width: 26%; }
   input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
+  details.advanced { margin-top: 14px; font-size: .9rem; }
+  details.advanced summary { cursor: pointer; color: var(--muted); }
+  details.advanced label { display: inline-flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .master { border-left: 4px solid var(--warn); background: var(--soft); padding: 10px 14px; border-radius: 6px; margin: 12px 0 0; font-size: .92rem; }
   ol.steps { padding-left: 20px; }
   ol.steps li { margin-bottom: 6px; }
   code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
@@ -114,8 +123,16 @@
           <input id="calname" type="text">
         </label>
         <button id="download" type="button">Download .ics</button>
-        <button id="download-sheet" type="button" class="secondary">Download edited sheet</button>
+        <button id="download-sheet" type="button" class="secondary" hidden>Download edited sheet</button>
       </div>
+      <details class="advanced" id="advanced">
+        <summary>Advanced options</summary>
+        <label><input type="checkbox" id="allow-edit"> Allow editing events on this page</label>
+      </details>
+      <p class="master" id="master-reminder" hidden><strong>Update the Master too.</strong> The Master sheet on the
+        course OneDrive is the source of truth, and edits made here do not reach it. Make the same changes in the
+        Master. Do not replace the Master with the downloaded sheet: that sheet leaves out the Status and Day
+        columns and the links in the Subject column.</p>
       <ul class="problems" id="problems"></ul>
       <p class="columns" id="columns"></p>
     </div>
@@ -124,15 +141,16 @@
     <div class="toolbar">
       <button type="button" class="secondary" id="all">Select all</button>
       <button type="button" class="secondary" id="none">Select none</button>
-      <span>Untick what you do not want. Click a cell to edit it; clear both times to make an event
-        all-day. Edits change only the downloads, not your original file: use <em>Download edited
-        sheet</em> to keep them.</span>
+      <button type="button" class="secondary" id="clear-filters" hidden>Clear filters</button>
+      <span id="hint"></span>
     </div>
     <div class="table-wrap"><table>
-      <colgroup><col><col class="c-subject"><col class="c-date"><col class="c-time"><col class="c-date"><col class="c-time"><col class="c-where"></colgroup>
+      <colgroup><col><col class="c-tag" id="col-tag"><col class="c-subject" id="col-subject"><col class="c-date"><col class="c-time"><col class="c-date"><col class="c-time"><col class="c-where"></colgroup>
       <thead><tr>
         <th><input type="checkbox" id="pick-all" aria-label="Select all" checked></th>
-        <th>Subject</th><th>Start date</th><th>Start</th><th>End date</th><th>End</th><th>Location</th>
+        <th id="th-tag">Tag<select class="filter" id="tag-filter" aria-label="Show only this tag"></select></th>
+        <th>Subject<input class="filter" type="search" id="search" placeholder="Search subjects" aria-label="Search subjects"></th>
+        <th>Start date</th><th>Start</th><th>End date</th><th>End</th><th>Location</th>
       </tr></thead>
       <tbody id="events"></tbody>
     </table></div>
@@ -163,7 +181,9 @@ const MODULES = ["__init__", "model", "parsing", "reader", "ics", "timezones", "
 const FIELDS = ["title", "start_date", "start_time", "end_date", "end_time", "location"];
 const INPUT_TYPE = { title: "text", start_date: "date", start_time: "time", end_date: "date", end_time: "time", location: "text" };
 const $ = (id) => document.getElementById(id);
-let current = null;  // {stem, data, rows: [{fields, original, selected, tr}]}
+let current = null;  // {stem, data, rows: [{fields, original, selected, tr, box, inputs}]}
+const TAG_COL = document.getElementById("col-tag");
+const NO_TAG = "\u0000";  // the tag filter's value for rows without a tag
 
 const GLUE = `
 import base64, io, json, sys
@@ -251,7 +271,7 @@ async function convertFile(file) {
   } finally {
     py.FS.unlink(path);
   }
-  current = { stem, data, rows: data.events.map((fields) => ({ fields: { ...fields }, original: fields, selected: true })) };
+  current = { stem, data, rows: data.events.map((fields) => ({ fields: { ...fields }, original: fields, selected: true, inputs: [] })) };
   render();
   return data;
 }
@@ -277,6 +297,17 @@ function render() {
   if (d.unused.length) text += ` Outlook columns not used: ${d.unused.map(esc).join(", ")}.`;
   $("columns").innerHTML = text;
 
+  const tags = [...new Set(current.rows.map((r) => r.fields.tag))];
+  const hasTags = tags.some(Boolean);
+  $("th-tag").hidden = !hasTags;
+  if (hasTags) $("col-subject").before(TAG_COL); else TAG_COL.remove();
+  const filter = $("tag-filter");
+  filter.innerHTML = "";
+  filter.append(new Option("Filter…", ""));
+  for (const tag of tags.filter(Boolean).sort((a, b) => a.localeCompare(b))) filter.append(new Option(tag, tag));
+  if (hasTags && tags.includes("")) filter.append(new Option("(no tag)", NO_TAG));
+  $("search").value = "";
+
   const body = $("events");
   body.innerHTML = "";
   current.rows.forEach((row, i) => {
@@ -290,15 +321,24 @@ function render() {
     row.box = box;
     pick.append(box);
     tr.append(pick);
+    if (hasTags) {
+      const tag = document.createElement("td");
+      tag.className = "tag";
+      tag.textContent = row.fields.tag;
+      tr.append(tag);
+    }
     for (const name of FIELDS) {
       const td = document.createElement("td");
       const input = Object.assign(document.createElement("input"), { type: INPUT_TYPE[name], value: row.fields[name] });
+      input.readOnly = !editing();
+      row.inputs.push(input);
       input.setAttribute("aria-label", name.replace("_", " ") + ", row " + (i + 1));
       input.addEventListener("input", () => {
         row.fields[name] = input.value;
         input.classList.toggle("edited", input.value !== row.original[name]);
         tr.classList.remove("bad");
         tr.title = "";
+        if (name === "title") applyFilters();
         update();
       });
       td.append(input);
@@ -306,17 +346,50 @@ function render() {
     }
     body.append(tr);
   });
-  update();
+  applyFilters();
 
   const fatal = d.problems.filter((p) => p.fatal).length;
   if (!d.events.length) setStatus("No events could be read from this file. See the list above.", true);
   else setStatus(fatal ? `Read, but ${fatal} row(s) were skipped. Check the list before importing.`
-                       : "Read. Untick or edit events below if needed, then download the .ics.");
+                       : "Read. Untick events below if needed, then download the .ics.");
+}
+
+function editing() {
+  return $("allow-edit").checked;
+}
+
+function setEditing() {
+  const on = editing();
+  if (current) for (const row of current.rows) for (const input of row.inputs) input.readOnly = !on;
+  $("download-sheet").hidden = !on;
+  $("hint").innerHTML = (on
+    ? "Click a cell to edit it; clear both times to make an event all-day. Edits change only the downloads: " +
+      "use <em>Download edited sheet</em> to keep them, and update the Master. "
+    : "") +
+    "The filters only narrow the list: the download takes every ticked event, shown or not. " +
+    "Select all / none act on the events shown.";
+  if (current) update();
+}
+
+function visible(row) {
+  return !row.tr.hidden;
+}
+
+function applyFilters() {
+  const tag = $("tag-filter").value;
+  const words = $("search").value.toLowerCase().split(/\s+/).filter(Boolean);
+  for (const row of current.rows) {
+    const title = row.fields.title.toLowerCase();
+    const tagOk = !tag || (tag === NO_TAG ? !row.fields.tag : row.fields.tag === tag);
+    row.tr.hidden = !(tagOk && words.every((w) => title.includes(w)));
+  }
+  update();
 }
 
 function update() {
   const rows = current.rows;
   const chosen = rows.filter((r) => r.selected).length;
+  const shown = rows.filter(visible);
   const edited = rows.filter((r) => FIELDS.some((f) => r.fields[f] !== r.original[f])).length;
   const fatal = current.data.problems.filter((p) => p.fatal).length;
   $("summary").innerHTML = "";
@@ -326,17 +399,21 @@ function update() {
     $("summary").append(s);
   };
   stat(`${chosen} / ${rows.length}`, "events selected");
+  $("clear-filters").hidden = !($("search").value || $("tag-filter").value);
+  if (shown.length < rows.length) stat(shown.length, "shown by the filters");
   if (edited) stat(edited, "edited");
+  $("master-reminder").hidden = !(editing() || edited);
   stat(fatal, fatal === 1 ? "row skipped" : "rows skipped");
   if (current.data.invited) stat(current.data.invited, "with invitees in the sheet (not imported)");
   $("download").textContent = `Download .ics (${chosen})`;
   $("download").disabled = $("download-sheet").disabled = chosen === 0;
-  $("pick-all").checked = chosen === rows.length;
-  $("pick-all").indeterminate = chosen > 0 && chosen < rows.length;
+  const shownChosen = shown.filter((r) => r.selected).length;
+  $("pick-all").checked = shown.length > 0 && shownChosen === shown.length;
+  $("pick-all").indeterminate = shownChosen > 0 && shownChosen < shown.length;
 }
 
 function setAll(on) {
-  for (const row of current.rows) {
+  for (const row of current.rows.filter(visible)) {
     row.selected = on;
     row.box.checked = on;
     row.tr.classList.toggle("off", !on);
@@ -349,6 +426,7 @@ async function exportSelected(kind) {
   const payload = [];
   current.rows.forEach((row, i) => { if (row.selected) payload.push({ i, fields: row.fields }); });
   const name = $("calname").value.trim() || current.stem;
+  const file = name.replace(/[\\/:*?"<>|]+/g, "_").replace(/[. ]+$/, "") || current.stem;
   const out = JSON.parse(py.globals.get("export")(JSON.stringify(payload), kind, name));
   for (const row of current.rows) { row.tr.classList.remove("bad"); row.tr.title = ""; }
   if (out.errors) {
@@ -362,12 +440,12 @@ async function exportSelected(kind) {
     return null;
   }
   if (kind === "ics") {
-    save(new Blob([out.text], { type: "text/calendar" }), current.stem + ".ics");
-    setStatus(`Downloaded ${payload.length} event(s) as ${current.stem}.ics. Import it into Outlook (below).`);
+    save(new Blob([out.text], { type: "text/calendar" }), file + ".ics");
+    setStatus(`Downloaded ${payload.length} event(s) as ${file}.ics. Import it into Outlook (below).`);
   } else {
     const bytes = Uint8Array.from(atob(out.base64), (c) => c.charCodeAt(0));
     save(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-         current.stem + " (edited).xlsx");
+         file + " (edited).xlsx");
     setStatus(`Downloaded the ${payload.length} selected event(s) as a sheet. It is the one to keep for the invitation run.`);
   }
   return out;
@@ -391,6 +469,11 @@ $("download-sheet").addEventListener("click", () => exportSelected("xlsx"));
 $("all").addEventListener("click", () => setAll(true));
 $("none").addEventListener("click", () => setAll(false));
 $("pick-all").addEventListener("change", (e) => setAll(e.target.checked));
+$("search").addEventListener("input", applyFilters);
+$("tag-filter").addEventListener("change", applyFilters);
+$("clear-filters").addEventListener("click", () => { $("search").value = ""; $("tag-filter").value = ""; applyFilters(); });
+$("allow-edit").addEventListener("change", setEditing);
+setEditing();
 $("file").addEventListener("change", (e) => { if (e.target.files[0]) convertFile(e.target.files[0]); });
 const drop = $("drop");
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });

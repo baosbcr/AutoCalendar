@@ -28,6 +28,7 @@ class Event:
     required: list[str] = field(default_factory=list)
     optional: list[str] = field(default_factory=list)
     calendar: str = ""
+    tag: str = ""  # who a placeholder is for; never sent to Outlook
     source_row: int = 0
 
     @property
