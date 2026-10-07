@@ -177,7 +177,7 @@
 <script>
 // The converter is the repository's own Python package, served next to this page
 // (see .github/workflows/pages.yml) and run by Pyodide. Nothing is uploaded.
-const MODULES = ["__init__", "model", "parsing", "reader", "ics", "timezones", "cli", "sheet_export"];
+const MODULES = ["__init__", "model", "parsing", "reader", "ics", "timezones", "cli", "sheet_export", "formatting"];
 const FIELDS = ["title", "start_date", "start_time", "end_date", "end_time", "location"];
 const INPUT_TYPE = { title: "text", start_date: "date", start_time: "time", end_date: "date", end_time: "time", location: "text" };
 const $ = (id) => document.getElementById(id);

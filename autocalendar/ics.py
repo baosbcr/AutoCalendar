@@ -87,6 +87,8 @@ def _event_lines(
         lines.append(f"LOCATION:{escape(event.location)}")
     if event.description:
         lines.append(f"DESCRIPTION:{escape(event.description)}")
+    if event.description_html:
+        lines.append(f"X-ALT-DESC;FMTTYPE=text/html:{escape(event.description_html)}")
     if event.categories:
         lines.append("CATEGORIES:" + ",".join(escape(c) for c in event.categories))
     if event.url:

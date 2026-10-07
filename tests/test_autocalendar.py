@@ -352,6 +352,43 @@ class TestExampleSheet(unittest.TestCase):
         self.assertEqual(text.count("BEGIN:VEVENT"), 7)
 
 
+class TestFormattedDescription(unittest.TestCase):
+    def test_excel_formatting_becomes_html(self):
+        # openpyxl cannot read back the formatted cells it writes itself (Excel's
+        # own files read fine), so the formatted cell is built directly here.
+        from openpyxl.cell.rich_text import CellRichText, TextBlock
+        from openpyxl.cell.text import InlineFont
+
+        from autocalendar.formatting import from_rich_cell, runs_html, runs_of, strip_runs
+
+        cell = from_rich_cell(CellRichText(
+            TextBlock(InlineFont(b=True), "Parking"),
+            "\nSee https://maps.example.com/x. A < B\tend\n",
+        ))
+        self.assertEqual(cell.strip(), "Parking\nSee https://maps.example.com/x. A < B\tend")
+        html = runs_html(strip_runs(runs_of(cell)))
+        self.assertEqual(
+            html,
+            '<b>Parking</b><br>See <a href="https://maps.example.com/x">https://maps.example.com/x</a>.'
+            " A &lt; B&nbsp;&nbsp;&nbsp;&nbsp;end",
+        )
+
+    def test_the_html_goes_into_x_alt_desc(self):
+        event = Event("Finals", dt.datetime(2027, 1, 22, 8, 30), dt.datetime(2027, 1, 22, 13),
+                      description="Parking", description_html="<html><b>Parking</b></html>")
+        text = build_calendar([event])
+        self.assertIn("DESCRIPTION:Parking\r\n", text)
+        self.assertIn("X-ALT-DESC;FMTTYPE=text/html:<html><b>Parking</b></html>", text)
+
+    def test_a_plain_csv_still_gets_clickable_links(self):
+        path = write_csv("Date,Subject,Description\n2026-09-10,Session,Map: https://example.com\n")
+        try:
+            event = read_events(path).events[0]
+        finally:
+            path.unlink()
+        self.assertIn('Map: <a href="https://example.com">', event.description_html)
+
+
 class TestAttendeeColumns(unittest.TestCase):
     def test_semicolons_win_over_commas(self):
         # a display name may legitimately contain a comma

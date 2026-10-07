@@ -42,7 +42,7 @@ column in Outlook's export is ignored.
 | End Date | if it ends on another day | `05-01-2027` |
 | All day event | for all-day events | `TRUE`, see below |
 | Location | optional | `Byg 303A, Aud. 42 DTU Lyngby` |
-| Description | optional | any text, several lines are fine |
+| Description | optional | any text, several lines are fine; bold, italic, underline and colour set in the cell carry over to Outlook, and web addresses become links |
 | Categories | optional | `Placeholder` (several: `Placeholder;Complete`) |
 | Required / Optional Attendees | optional, not imported | `thow@dtu.dk; name@dtu.dk` |
 

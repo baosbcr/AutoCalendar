@@ -22,6 +22,7 @@ class Event:
     end: dt.datetime | dt.date
     location: str = ""
     description: str = ""
+    description_html: str = ""  # the same, formatted; written as X-ALT-DESC
     categories: list[str] = field(default_factory=list)
     url: str = ""
     event_id: str = ""

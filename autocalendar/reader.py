@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .formatting import document, from_rich_cell, runs_html, runs_of, strip_runs
 from .model import Event
 from .parsing import (
     parse_bool,
@@ -181,7 +182,12 @@ def _load_xlsx(path: Path, sheet: str | int | None) -> tuple[list[list], str]:
             "(or save the sheet as CSV, which needs nothing extra)"
         ) from exc
 
-    book = load_workbook(path, data_only=True, read_only=True)
+    try:
+        from openpyxl.cell.rich_text import CellRichText
+        book = load_workbook(path, data_only=True, read_only=True, rich_text=True)
+    except ImportError:  # pragma: no cover - openpyxl before 3.1: no formatting
+        CellRichText = ()
+        book = load_workbook(path, data_only=True, read_only=True)
     try:
         if sheet is None:
             worksheet = book.active
@@ -194,7 +200,11 @@ def _load_xlsx(path: Path, sheet: str | int | None) -> tuple[list[list], str]:
                     + ", ".join(book.sheetnames)
                 )
             worksheet = book[sheet]
-        rows = [list(row) for row in worksheet.iter_rows(values_only=True)]
+        # Cells with formatting inside them keep it, for the HTML description.
+        rows = [
+            [from_rich_cell(c) if isinstance(c, CellRichText) else c for c in row]
+            for row in worksheet.iter_rows(values_only=True)
+        ]
         name = worksheet.title
     finally:
         book.close()
@@ -429,12 +439,14 @@ def _row_to_event(
         elif event_end == event_start:
             event_end = event_start + default_duration
 
-    description_parts = []
+    description_parts, html_parts = [], []
     if _text(cell("description")):
         description_parts.append(_text(cell("description")))
+        html_parts.append(runs_html(strip_runs(runs_of(cell("description")))))
     for index, label in extras:
         if index < len(row) and not _is_blank(row[index]):
             description_parts.append(f"{label}: {_text(row[index])}")
+            html_parts.append(runs_html([(f"{label}: {_text(row[index])}", {})]))
 
     categories = [
         part.strip()
@@ -448,6 +460,7 @@ def _row_to_event(
         end=event_end,
         location=_text(cell("location")),
         description="\n".join(description_parts),
+        description_html=document("<br>".join(html_parts)) if html_parts else "",
         categories=categories,
         url=_text(cell("url")),
         required=split_people(_text(cell("required"))),
