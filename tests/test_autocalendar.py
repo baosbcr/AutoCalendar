@@ -298,7 +298,8 @@ class TestReader(unittest.TestCase):
             path.unlink()
         self.assertEqual(result.mapping["date"], "Date")
         self.assertEqual(result.events[0].start, dt.datetime(2027, 1, 4, 7, 30))
-        self.assertIn("Day: Day 1", result.events[0].description)
+        self.assertEqual(result.events[0].description, "")
+        self.assertIn("Day", result.unused_columns)
 
     def test_master_sheet_columns(self):
         # Toke's master: a note in the subject header, a Tags column for the

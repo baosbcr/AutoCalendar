@@ -127,7 +127,7 @@ class ReadResult:
     problems: list[RowProblem] = field(default_factory=list)
     mapping: dict[str, str] = field(default_factory=dict)  # canonical -> header
     extra_columns: list[str] = field(default_factory=list)
-    unused_columns: list[str] = field(default_factory=list)  # Outlook housekeeping
+    unused_columns: list[str] = field(default_factory=list)  # left out on purpose
     header_row: int = 1
     sheet: str = ""
 
@@ -288,16 +288,19 @@ def map_columns(
     """Map canonical field -> column index, plus the columns we did not claim.
 
     Returns the mapping, the extra columns (kept in the description), and the
-    Outlook export columns that are left out on purpose.
+    columns left out on purpose: Outlook housekeeping, and a column that lost
+    to a better-named one for the same field.
 
     When two columns could fill the same field, the better name wins, whatever
     the column order: a sheet with both "Day" ("Day 1") and "Date" takes its
     dates from "Date". ALIASES lists each field's names best first.
     """
     best: dict[str, tuple[int, int]] = {}  # canonical -> (rank, column index)
+    recognised: set[int] = set()
     for index, cell in enumerate(header):
         canonical, alias = _lookup(cell)
         if canonical and _text(cell):
+            recognised.add(index)
             rank = ALIASES[canonical].index(alias)
             if canonical not in best or rank < best[canonical][0]:
                 best[canonical] = (rank, index)
@@ -310,7 +313,7 @@ def map_columns(
         label = _text(cell)
         if not label or index in claimed:
             continue
-        if normalise(cell) in OUTLOOK_UNUSED:
+        if normalise(cell) in OUTLOOK_UNUSED or index in recognised:
             unused.append(label)
         else:
             extras.append((index, label))

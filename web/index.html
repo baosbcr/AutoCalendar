@@ -294,7 +294,7 @@ function render() {
   const cols = d.mapping.map(([label, header]) => `${label} ← <code>${esc(header)}</code>`).join(", ");
   let text = cols ? `Read sheet “${esc(d.sheet)}”, header on row ${d.header_row}. Columns used: ${cols}.` : "";
   if (d.extra.length) text += ` Added to the description: ${d.extra.map(esc).join(", ")}.`;
-  if (d.unused.length) text += ` Outlook columns not used: ${d.unused.map(esc).join(", ")}.`;
+  if (d.unused.length) text += ` Columns not used: ${d.unused.map(esc).join(", ")}.`;
   $("columns").innerHTML = text;
 
   const tags = [...new Set(current.rows.map((r) => r.fields.tag))];

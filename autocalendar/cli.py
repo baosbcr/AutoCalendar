@@ -477,7 +477,7 @@ def _main(argv: list[str] | None = None) -> int:
             )
             print(f"  Other columns ({where}): {', '.join(result.extra_columns)}")
         if result.unused_columns:
-            print(f"  Outlook columns not used: {', '.join(result.unused_columns)}")
+            print(f"  Columns not used: {', '.join(result.unused_columns)}")
         print(f"  {len(result.events)} event(s) found")
 
     for problem in result.problems:
